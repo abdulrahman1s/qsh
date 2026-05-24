@@ -38,12 +38,34 @@ Run?  [Y]es  [N]o  [E]dit  [R]efine  [?]
 <details>
 <summary><b>Click to expand install instructions</b></summary>
 
+### Install script
+
+Download the latest prebuilt GitHub Release binary and install it to `~/.local/bin/qsh`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh
+```
+
+The script detects the host release target, downloads `qsh-<version>-<target>.tar.gz`,
+and verifies the `.sha256` asset when a local SHA-256 tool is available. It is
+user-only by default and never uses `sudo`, `doas`, or root permissions.
+
+You can also have it add shell integration:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh -s -- --zshrc
+curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh -s -- --bashrc
+curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh -s -- --fishrc
+```
+
 ### From source
 
 ```bash
+git clone https://github.com/abdulrahman1s/qsh.git
+cd qsh
 cargo build --release
-sudo install -m 0755 target/release/qsh /usr/local/bin/qsh
-# Or: cp target/release/qsh ~/.local/bin/
+mkdir -p ~/.local/bin
+install -m 0755 target/release/qsh ~/.local/bin/qsh
 ```
 
 Then add the wrapper for your shell:

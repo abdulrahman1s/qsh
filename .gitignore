@@ -1,7 +1,7 @@
 /target
 .claude
-install.sh
 /.direnv
 .codex
 TODO.*
 .vscode
+.env
