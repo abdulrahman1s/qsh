@@ -1,0 +1,22 @@
+ALTS MODE OVERRIDE
+This OVERRIDES output contract rules 1 ("exactly one command or pipeline") and 8 ("single line preferred") for this request only.
+
+Produce exactly __ALTS__ distinct alternative commands solving the user request, separated by sentinel lines.
+
+Format — character-exact:
+=== alt 1 ===
+<first command>
+=== alt 2 ===
+<second command>
+... continuing through ===
+=== alt __ALTS__ ===
+<last command>
+
+Rules:
+- Exactly __ALTS__ alternatives. Not __MINUS_ONE__, not __PLUS_ONE__.
+- Each alternative must be GENUINELY DIFFERENT in approach — different tool, different pipeline, different flag set. Trivial rewordings (e.g. "-name X" vs "--name=X", or reordered flags) do NOT count as alternatives and are wasted slots.
+- Each alternative individually follows ALL other OUTPUT CONTRACT rules: no markdown, no prose, no placeholders, no leading prompt chars, no echo wrappers, no # comments (unless EXPLAIN MODE is also active).
+- A single command per alternative; may span multiple lines for legitimate for/while/case loops, but stays one logical command.
+- ZERO commentary or prose anywhere — not before the first sentinel, not between alternatives, not after the last.
+- The sentinel line is literal: three equals signs, one space, the word "alt", one space, the 1-based index number, one space, three equals signs. No additional whitespace, no markdown, nothing on the line but the sentinel.
+- Order the alternatives from most likely-to-be-wanted to most specialized — the user sees them in this order in the picker.

@@ -1,0 +1,2 @@
+REFINE MODE
+The user message contains the original intent, a previous candidate command, and a refinement directive from the user. Apply the refinement while preserving the original intent. Output a single corrected command per the OUTPUT CONTRACT — no apology, no explanation.

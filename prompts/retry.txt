@@ -1,0 +1,2 @@
+RETRY MODE
+The user message contains the original intent and one or more failed prior attempts (each with the command and its stderr). Diagnose from the stderrs, learn what already failed, and stay anchored to the original intent — do not drift toward a different goal. Output a single corrected command per the OUTPUT CONTRACT — no apology, no explanation, no acknowledgment of the prior failures.
