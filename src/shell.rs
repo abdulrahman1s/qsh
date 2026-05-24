@@ -1,5 +1,5 @@
-use crate::cli::{Cli, InitArgs, Shell};
-use clap::CommandFactory;
+use crate::cli::{Cli, GenerateArgs, InitArgs, Shell};
+use clap::{Args, CommandFactory};
 use clap_complete::{Shell as ClapShell, generate};
 
 pub fn init(args: InitArgs) -> i32 {
@@ -14,27 +14,42 @@ pub fn init(args: InitArgs) -> i32 {
 }
 
 fn render_completion(shell: Shell) -> String {
-    let mut cmd = Cli::command();
-    let mut buf: Vec<u8> = Vec::new();
     let clap_shell = match shell {
         Shell::Bash => ClapShell::Bash,
         Shell::Fish => ClapShell::Fish,
         Shell::Zsh => ClapShell::Zsh,
     };
-    generate(clap_shell, &mut cmd, "qsh", &mut buf);
-    let mut script = String::from_utf8(buf).unwrap_or_default();
 
-    // Mirror completion onto the `?` / `??` aliases so `<tab>` works there too.
-    // zsh: alias `?` resolves to `noglob qsh`; `compdef` registers _qsh for the alias name.
-    // bash: alias `?` runs `__qsh_pre_noglob; qsh`; completion keys off the first word.
-    // fish: `?` and `??` are functions; `--wraps qsh` delegates completion.
-    let aliasing = match shell {
-        Shell::Zsh => "\ncompdef _qsh '?' '??'\n",
-        Shell::Bash => "\ncomplete -F _qsh -o nosort -o bashdefault -o default '?' '??'\n",
-        Shell::Fish => "\ncomplete -c '?' --wraps qsh\ncomplete -c '??' --wraps qsh\n",
+    // 1) Full completion for `qsh` (covers subcommands like `init`, `known`).
+    let main_script = {
+        let mut cmd = Cli::command();
+        let mut buf: Vec<u8> = Vec::new();
+        generate(clap_shell, &mut cmd, "qsh", &mut buf);
+        String::from_utf8(buf).unwrap_or_default()
     };
-    script.push_str(aliasing);
-    script
+
+    // 2) Synthetic completion that exposes `GenerateArgs` flags directly,
+    // so `? <tab>` and `?? <tab>` surface things like --smart, --model,
+    // --explain instead of just the top-level --help/--version.
+    let alt_script = {
+        let cmd = GenerateArgs::augment_args(clap::Command::new("qshq"));
+        let mut cmd = cmd;
+        let mut buf: Vec<u8> = Vec::new();
+        generate(clap_shell, &mut cmd, "qshq", &mut buf);
+        String::from_utf8(buf).unwrap_or_default()
+    };
+
+    // 3) Bind the synthetic completion to the `?` / `??` aliases.
+    // zsh: alias `?` resolves to `noglob qsh`; compdef ties _qshq to the alias name.
+    // bash: alias `?` runs `__qsh_pre_noglob; qsh`; completion keys off the first word.
+    // fish: `?` and `??` are functions; `--wraps qshq` delegates completion to qshq.
+    let aliasing = match shell {
+        Shell::Zsh => "\ncompdef _qshq '?' '??'\n",
+        Shell::Bash => "\ncomplete -F _qshq -o nosort -o bashdefault -o default '?' '??'\n",
+        Shell::Fish => "\ncomplete -c '?' --wraps qshq\ncomplete -c '??' --wraps qshq\n",
+    };
+
+    format!("{main_script}\n{alt_script}{aliasing}")
 }
 
 // Zsh wrapper. The strategy:
@@ -52,7 +67,7 @@ const ZSH_INIT: &str = r#"# qsh zsh integration. Source this from your zshrc:
 
 qsh() {
   case "$1" in
-    generate|record|init|-h|--help|-V|--version)
+    generate|record|init|known|-h|--help|-V|--version)
       command qsh "$@"
       return $?
       ;;
@@ -123,7 +138,7 @@ qsh() {
   __qsh_restore_glob
 
   case "$1" in
-    generate|record|init|-h|--help|-V|--version)
+    generate|record|init|known|-h|--help|-V|--version)
       command qsh "$@"
       return $?
       ;;
@@ -180,7 +195,7 @@ function qsh
     end
 
     switch "$subcmd"
-        case generate record init -h --help -V --version
+        case generate record init known -h --help -V --version
             command qsh $argv
             return $status
     end
@@ -273,21 +288,100 @@ mod tests {
     fn zsh_completion_registers_question_mark_aliases() {
         let script = render_completion(Shell::Zsh);
         assert!(script.contains("_qsh()"));
-        assert!(script.contains("compdef _qsh '?' '??'"));
+        assert!(script.contains("_qshq()"));
+        assert!(script.contains("compdef _qshq '?' '??'"));
     }
 
     #[test]
     fn bash_completion_registers_question_mark_aliases() {
         let script = render_completion(Shell::Bash);
         assert!(script.contains("_qsh()"));
-        assert!(script.contains("complete -F _qsh -o nosort -o bashdefault -o default '?' '??'"));
+        assert!(script.contains("_qshq()"));
+        assert!(script.contains("complete -F _qshq -o nosort -o bashdefault -o default '?' '??'"));
     }
 
     #[test]
     fn fish_completion_wraps_question_mark_functions() {
         let script = render_completion(Shell::Fish);
         assert!(script.contains("complete -c qsh"));
-        assert!(script.contains("complete -c '?' --wraps qsh"));
-        assert!(script.contains("complete -c '??' --wraps qsh"));
+        assert!(script.contains("complete -c qshq"));
+        assert!(script.contains("complete -c '?' --wraps qshq"));
+        assert!(script.contains("complete -c '??' --wraps qshq"));
+    }
+
+    #[test]
+    fn question_mark_completion_exposes_generate_flags() {
+        // The synthetic qshq completion must include flags from GenerateArgs,
+        // not just the top-level qsh subcommand list.
+        let cases: [(Shell, &[&str]); 3] = [
+            (
+                Shell::Zsh,
+                &["--smart", "--explain", "--model", "--claude", "--no-cache"],
+            ),
+            (
+                Shell::Bash,
+                &["--smart", "--explain", "--model", "--claude", "--no-cache"],
+            ),
+            (
+                Shell::Fish,
+                &[
+                    "-l smart",
+                    "-l explain",
+                    "-l model",
+                    "-l claude",
+                    "-l no-cache",
+                ],
+            ),
+        ];
+        for (shell, flags) in cases {
+            let script = render_completion(shell);
+            for flag in flags {
+                assert!(
+                    script.contains(flag),
+                    "{:?} completion missing {flag}",
+                    shell
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wrappers_pass_through_every_qsh_subcommand() {
+        // The wrappers route the first arg by name: anything not in the
+        // passthrough list gets sent to `qsh generate` as a natural-language
+        // task. If a subcommand is added to the CLI but missed here, typing
+        // its name would trigger AI generation instead of running it.
+        use clap::CommandFactory;
+        let cmd = super::super::cli::Cli::command();
+        for sub in cmd.get_subcommands() {
+            let name = sub.get_name();
+            assert!(
+                shellish_contains(ZSH_INIT, name),
+                "zsh wrapper missing subcommand `{name}`"
+            );
+            assert!(
+                shellish_contains(BASH_INIT, name),
+                "bash wrapper missing subcommand `{name}`"
+            );
+            assert!(
+                shellish_contains(FISH_INIT, name),
+                "fish wrapper missing subcommand `{name}`"
+            );
+        }
+    }
+
+    // True if `name` appears as a standalone token in `wrapper` — surrounded
+    // by case-alternation delimiters or whitespace, never as a substring of a
+    // longer identifier.
+    fn shellish_contains(wrapper: &str, name: &str) -> bool {
+        let boundary = |c: char| matches!(c, '|' | '(' | ')' | ' ' | '\n' | '\t');
+        wrapper.match_indices(name).any(|(i, _)| {
+            let before = wrapper[..i].chars().last().is_none_or(boundary);
+            let after = wrapper[i + name.len()..]
+                .chars()
+                .next()
+                .is_none_or(boundary);
+            before && after
+        })
     }
 }
