@@ -1,15 +1,25 @@
-# qsh
+# Qsh ⚡
 
-A standalone binary that turns natural-language descriptions into shell commands using Gemini, OpenAI, Claude, or local Ollama. You see every command before it runs. Works in zsh, bash, and fish.
+*qsh = "question shell." `?` was already the universal symbol for "I don't know. Figure it out." Now it actually does.*
+
+Yet another natural-language shell tool. Here's the thing that makes this one stick:
 
 ```
-? find files larger than 1GB
-gemini ▸ gemini-3.5-flash ▸ fast
-find . -type f -size +1G
-Run?  [Y]es  [N]o  [E]dit  [R]efine  [?]
+$ ? extract this archive
+tar -xzf archive.tar.bz2
+Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] y
+gzip: stdin: not in gzip format
+tar: Error is not recoverable: exiting now
+
+$ ?
+retrying: extract this archive
+tar -xjf archive.tar.bz2
+Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] y
 ```
 
-`?` is fast mode. `??` is smart mode (reasoning/thinking enabled). Failed commands run through the tool feed back into the next retry. You can refine, edit, or re-run any candidate.
+🔁 A bare `?` within 10 minutes of a failed command replays the original intent plus the last 3 attempts and their stderr. The model fixes what actually broke instead of re-cycling through approaches it already tried. None of the other AI-shell tools I tried did this. It's the difference between a screenshot demo and something you reach for daily.
+
+`?` is fast mode. `??` is smart mode (**reasoning on**). Works in zsh, bash, fish. Backed by Gemini, OpenAI, Claude, or local Ollama. Every command waits for `y`. The rest of this README is taste-level decisions: stdout-is-the-command discipline, cache-on-edit, single-request `--alts N`, cross-distro detection, and a 🛡️ safety model that refuses `rm -rf /` but lets `rm -rf /tmp/build` through because you took responsibility by naming it.
 
 ---
 
@@ -23,13 +33,13 @@ Run?  [Y]es  [N]o  [E]dit  [R]efine  [?]
 - **Failure-aware retry.** If a command run through `?` fails, a bare `?` within 10 minutes replays the _original intent_ plus the last 3 failed attempts (each with their stderr) so the model can fix what broke without re-cycling through approaches it already tried.
 - **Stdin context.** Anything piped in is included as context. `git status | ? what should I do`, `cat err.log | ? why is this failing`.
 - **Project context auto-injection.** Probes the cwd for git branch, language manifests (`Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`, `deno.json`, `mix.exs`, etc.) and build tooling (`flake.nix`, `Makefile`, `justfile`, `Dockerfile`, `compose.yaml`, etc.) and tells the model. So "run the tests" picks the right runner; "format this" picks the right formatter.
-- **Cross-distro by default.** The system prompt auto-adjusts to your OS at runtime — package manager (`apt`, `dnf`, `pacman`, `apk`, `zypper`, `xbps`, `emerge`, `brew`, `pkg`, or NixOS-declarative), clipboard tool (Wayland / X11 / macOS / none), and BSD-vs-GNU userland flag conventions are all detected. Tested on Debian-, RHEL-, Arch-, Alpine-, openSUSE-, Void-, Gentoo-family Linuxes plus NixOS, FreeBSD, and macOS.
+- **Cross-distro by default.** The system prompt auto-adjusts to your OS at runtime: package manager (`apt`, `dnf`, `pacman`, `apk`, `zypper`, `xbps`, `emerge`, `brew`, `pkg`, or NixOS-declarative), clipboard tool (Wayland / X11 / macOS / none), and BSD-vs-GNU userland flag conventions are all detected. Tested on Debian-, RHEL-, Arch-, Alpine-, openSUSE-, Void-, Gentoo-family Linuxes plus NixOS, FreeBSD, and macOS.
 - **Why-comments.** `-e/--explain` appends a `# why: …` shell comment so you actually learn what the flags do. Stripped from history and from re-edits so up-arrow gives a clean command.
-- **Local response cache.** Identical queries return instantly from `~/.cache/qsh/` instead of round-tripping the API. Cache key includes provider, model, mode, system prompt, and project context — so different stacks/branches cache separately.
+- **Local response cache.** Identical queries return instantly from `~/.cache/qsh/` instead of round-tripping the API. Cache key includes provider, model, mode, system prompt, and project context, so different stacks/branches cache separately.
 - **Live streaming with typewriter pacing.** Output streams as the model produces it, paced for visual consistency between fast and smart modes.
 - **Stderr is the UI surface.** Status, spinner, typewriter playback, confirm prompt, debug dumps, and errors go to stderr. Stdout is reserved for the final accepted command, so the wrapper can `eval` it cleanly.
-- **Hardened against API-key leaks.** Keys go in `Authorization`, `x-api-key`, or `x-goog-api-key` headers — never the URL, never stdout. Debug output redacts them.
-- **Safety hard-stops.** The system prompt refuses unguarded `rm -rf /`, `dd` to system disks, fork bombs, pipe-to-shell from URLs, etc — but only when the user _didn't_ explicitly name the path. `rm -rf /tmp/build` is fine; `rm -rf $X/` where `$X` may be empty isn't.
+- **Hardened against API-key leaks.** Keys go in `Authorization`, `x-api-key`, or `x-goog-api-key` headers, never the URL or stdout. Debug output redacts them.
+- **Safety hard-stops.** The system prompt refuses unguarded `rm -rf /`, `dd` to system disks, fork bombs, pipe-to-shell from URLs, etc. It only refuses when the user _didn't_ explicitly name the path. `rm -rf /tmp/build` is fine; `rm -rf $X/` where `$X` may be empty isn't.
 
 ---
 
@@ -179,7 +189,7 @@ Ollama uses `http://127.0.0.1:11434` by default. Override it with `OLLAMA_HOST` 
 
 ### Stdin context
 
-Anything piped in is treated as labelled context for the model — useful for "what does this mean", "what should I do with this", or "what's wrong here" workflows.
+Anything piped in is treated as labelled context for the model, useful for "what does this mean", "what should I do with this", or "what's wrong here" workflows.
 
 ```sh
 git status | ? what should I do
@@ -205,14 +215,14 @@ Stdin is capped at **32 KB**. The first 32 KB of a long log is usually more diag
 tail -c 32k server.log | ? what's the last error here
 ```
 
-You can combine stdin context with explicit intent — the model gets both:
+You can combine stdin context with explicit intent. The model gets both:
 
 ```sh
 git status | ? -e prepare a clean-up commit
 # → git add -A && git commit -m "chore: clean up" # why: -A stages new+modified+deleted in one shot
 ```
 
-### File context — `./path/to/file`
+### File context: `./path/to/file`
 
 Any argument starting with `./` and pointing at a readable file is loaded inline as labelled context. Multiple such args are allowed; total budget is the first **32 KB** combined.
 
@@ -226,11 +236,11 @@ A `./token` that doesn't resolve to a file falls through as literal task text. D
 
 **Line slicing.** Append a colon-suffix to a file ref to send only part of the file:
 
-| Syntax              | What it sends                            |
-| ------------------- | ---------------------------------------- |
-| `./file.log:50`     | First 50 lines                           |
-| `./file.log:-50`    | Last 50 lines (like `tail -n 50`)        |
-| `./file.log:120-180`| Lines 120 through 180 inclusive          |
+| Syntax               | What it sends                     |
+| -------------------- | --------------------------------- |
+| `./file.log:50`      | First 50 lines                    |
+| `./file.log:-50`     | Last 50 lines (like `tail -n 50`) |
+| `./file.log:120-180` | Lines 120 through 180 inclusive   |
 
 ```sh
 ? ./build.log:-100 why is this failing
@@ -246,7 +256,7 @@ cat manifest.json | ? ./schema.json does the stdin match the schema
 ? -e ./Dockerfile what does ARG vs ENV do here
 ```
 
-### Per-project config — `.qshrc`
+### Per-project config: `.qshrc`
 
 Drop a `.qshrc` in any directory (or any ancestor of it) to set defaults that only apply when you're working in that tree. The closest one wins. Format is dead simple:
 
@@ -261,13 +271,13 @@ Tests run with `bun test`; build is `bun run build`.
 Always prefer ripgrep over grep, fd over find.
 ```
 
-Recognised keys are `provider`, `mode`, `model`. Everything after the `---` line is free-form text appended to the system prompt — use it for project conventions that don't fit in language-manifest auto-detection.
+Recognised keys are `provider`, `mode`, `model`. Everything after the `---` line is free-form text appended to the system prompt. Use it for project conventions that don't fit in language-manifest auto-detection.
 
 **Precedence**: CLI flag > `.qshrc` > env var (`QSH_PROVIDER`, `QSH_MODE`, `OPENAI_MODEL`, …) > built-in default.
 
-`.qshrc` is parsed, not sourced — a stray `$(rm -rf ~)` in there is treated as a literal string. Comments (`# …`) and blank lines are skipped.
+`.qshrc` is parsed, not sourced. A stray `$(rm -rf ~)` in there is treated as a literal string. Comments (`# …`) and blank lines are skipped.
 
-### Multiple candidates — `--alts N`
+### Multiple candidates: `--alts N`
 
 When the right answer isn't obvious, ask the model for **N** distinct candidate commands in a _single_ request and pick from the lot via `fzf` (falls back to a numbered menu if `fzf` isn't installed):
 
@@ -282,7 +292,7 @@ The system prompt instructs the model to emit candidates separated by literal se
 - **Works on every provider** including reasoning models that reject temperature variation.
 - **The model can deliberately diversify** ("give me three _different_ approaches") rather than producing near-identical samples at varied temperatures.
 
-After picking, the normal confirm prompt fires — `y` runs, `e` edits, `r` refines, `n` declines.
+After picking, the normal confirm prompt fires: `y` runs, `e` edits, `r` refines, `n` declines.
 
 `--alts` results are **not cached**. The whole point is exploration, so future identical queries should still get fresh alternatives. Pairs especially well with `??` smart mode for harder asks.
 
@@ -299,7 +309,7 @@ alt >
   systemctl list-units --type=service --state=running --no-pager -o json | jq -r '.[] | "\(.activeenter) \(.unit)"' | sort | head -10
 ```
 
-### Refine — press `r` at the prompt
+### Refine: press `r` at the prompt
 
 When the candidate is close but not quite right, press `r` and type a follow-up directive. The model gets the original intent + the previous candidate + your refinement, and tries again.
 
@@ -321,9 +331,9 @@ find . -path ./.git -prune -o -type f -exec md5sum {} + | sort -f | uniq -d -w 3
 Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] y
 ```
 
-Refines stack — each `r` carries the prior candidate forward, so iterating "case-insensitive → exclude .git → also exclude node_modules" is natural.
+Refines stack. Each `r` carries the prior candidate forward, so iterating "case-insensitive → exclude .git → also exclude node_modules" is natural.
 
-Refines are not cached. Each one costs an API round-trip. If you want to commit a tweak permanently for future identical queries, use `e` instead — `e` edits in place and saves the result to cache.
+Refines are not cached. Each one costs an API round-trip. If you want to commit a tweak permanently for future identical queries, use `e` instead. The edited command is saved to cache.
 
 <details>
 <summary>More refine examples</summary>
@@ -347,7 +357,7 @@ for f in *.png; do cwebp "$f" -o "${f%.png}.webp"; done
 
 </details>
 
-### Retry after failure — just press `?` again
+### Retry after failure: just press `?` again
 
 When a command generated or edited through `?` fails, a bare `?` within 10 minutes replays the _original intent_ plus the last 3 attempts (each with their stderr) so the model can fix what actually broke instead of restarting from scratch.
 
@@ -368,7 +378,7 @@ tar -xjf archive.tar.bz2
 Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] y
 ```
 
-The retry buffer holds up to 3 attempts before pruning. After a successful run, the buffer is cleared. After 10 minutes of no failures, it auto-expires — so an old broken command from earlier in the day doesn't pollute a fresh `?`.
+The retry buffer holds up to 3 attempts before pruning. After a successful run, the buffer is cleared. After 10 minutes of no failures, it auto-expires, so an old broken command from earlier in the day doesn't pollute a fresh `?`.
 
 <details>
 <summary>More retry examples</summary>
@@ -399,11 +409,11 @@ kubectl port-forward -n cache svc/redis-master 6379:6379
 
 </details>
 
-If retries are heading the wrong direction, type a normal `?` query to start over — the failure buffer is rebuilt from whatever attempt sequence comes next.
+If retries are heading the wrong direction, type a normal `?` query to start over. The failure buffer is rebuilt from whatever attempt sequence comes next.
 
-### Edit before running — press `e`
+### Edit before running: press `e`
 
-Drops you into an inline editor on the candidate command. Tweak a path, swap a flag, then Enter to run. **Edits are persisted to cache** — next time you ask the same question, you get your edit, not the model's original.
+Drops you into an inline editor on the candidate command. Tweak a path, swap a flag, then Enter to run. **Edits are persisted to cache**, so next time you ask the same question, you get your edit, not the model's original.
 
 ```
 $ ? show top memory hogs
@@ -451,7 +461,7 @@ Each hotkey letter is colored: **Y** green (run), **N** bold red (decline, defau
 | Key | Action                                     |
 | --- | ------------------------------------------ |
 | `y` | Run the command                            |
-| `n` | Decline (default — plain Enter also works) |
+| `n` | Decline (default; plain Enter also works) |
 | `e` | Edit the command before running            |
 | `r` | Refine: rewrite with a follow-up directive |
 | `?` | Show this help inline, then re-prompt      |
@@ -470,8 +480,8 @@ Provider:
   -p, --provider PROV   One of gemini/openai/claude/ollama; aliases accepted
 
 Mode:
-  -s, --smart           Reasoning/thinking enabled — slower, more accurate
-  -f, --fast            Minimal reasoning — fast and cheap (default)
+  -s, --smart           Reasoning/thinking enabled, slower and more accurate
+  -f, --fast            Minimal reasoning, fast and cheap (default)
 
 Cache:
   --no-cache            Skip the cache for this call (no read, no write)
@@ -481,7 +491,7 @@ Context:
   --no-context          Skip cwd-aware project-context injection
   ./<path>              Include a file as labelled context (32 KB cap)
                           Slice: ./path:N first N lines, ./path:-N last N, ./path:A-B inclusive range
-  .qshrc                Per-project defaults — see below
+  .qshrc                Per-project defaults; see below
 
 Alternatives:
   -a, --alts N          Ask the model for N (1-8) candidates in one request, pick via fzf
@@ -515,7 +525,7 @@ Other:
 
 The system prompt enforces hard-stop refusals for unambiguously dangerous patterns: recursive deletion of system roots, whole-disk writes (`dd`, `mkfs`, `wipefs`) to unnamed devices, fork bombs, pipe-to-shell from arbitrary URLs, mass `chmod 777`, disabling firewalls, etc. The model emits `echo 'REFUSED: <reason>'` instead of the literal command in those cases.
 
-The carveout: if you **explicitly name** a specific path or device — `rm -rf /tmp/build`, `wipe my USB at /dev/sdc` — it's generated normally. You took responsibility by naming it.
+The carveout: if you **explicitly name** a specific path or device, such as `rm -rf /tmp/build` or `wipe my USB at /dev/sdc`, it's generated normally. You took responsibility by naming it.
 
 This is a defense-in-depth layer, not a guarantee. **You** see every command before it runs and **you** press y. Read what's on the line.
 
@@ -525,7 +535,7 @@ This is a defense-in-depth layer, not a guarantee. **You** see every command bef
 
 - Prompts, stdin context, and file context are sent to whichever provider you selected. Don't pipe secrets you don't want logged by your provider's API endpoint; local Ollama stays on the configured local endpoint.
 - API keys are passed via HTTP headers, never URLs. Debug output redacts them.
-- Stdin input is capped at 32 KB (head, not tail — start of a log/diff is more diagnostic than the end).
+- Stdin input is capped at 32 KB (head, not tail; the start of a log/diff is more diagnostic than the end).
 - Debug mode (`-d`) prints the full request body and raw response to stderr. It does not print provider headers, but the request body includes your prompt plus any stdin/file context.
 
 ---
@@ -584,9 +594,9 @@ shell wrapper:
 
 The system prompt **auto-adjusts** to your environment at runtime. On every call, it probes:
 
-- **OS** — reads `/etc/os-release` on Linux for `ID`, `ID_LIKE`, `PRETTY_NAME`; checks `$OSTYPE` for macOS and the BSDs.
-- **Package manager** — picks the right install command (`apt`, `dnf`, `pacman`, `apk`, `zypper`, `xbps`, `emerge`, `brew`, `pkg`) based on detected distro. NixOS gets a "don't suggest install steps; the system is declarative" rule. Unknown distros fall back to "pick guaranteed-available POSIX tools, don't guess at install commands".
-- **Clipboard** — Wayland (`wl-copy`/`wl-paste`) if `$WAYLAND_DISPLAY` is set and the tools are installed, X11 (`xclip` or `xsel`) if `$DISPLAY` is set, macOS pasteboard (`pbcopy`/`pbpaste`) on Darwin, otherwise nothing — model is told to skip clipboard commands when none is available.
+- **OS**: reads `/etc/os-release` on Linux for `ID`, `ID_LIKE`, `PRETTY_NAME`; checks `$OSTYPE` for macOS and the BSDs.
+- **Package manager**: picks the right install command (`apt`, `dnf`, `pacman`, `apk`, `zypper`, `xbps`, `emerge`, `brew`, `pkg`) based on detected distro. NixOS gets a "don't suggest install steps; the system is declarative" rule. Unknown distros fall back to "pick guaranteed-available POSIX tools, don't guess at install commands".
+- **Clipboard**: Wayland (`wl-copy`/`wl-paste`) if `$WAYLAND_DISPLAY` is set and the tools are installed, X11 (`xclip` or `xsel`) if `$DISPLAY` is set, macOS pasteboard (`pbcopy`/`pbpaste`) on Darwin, otherwise nothing. The model is told to skip clipboard commands when none is available.
 
 **Detected families:**
 
@@ -688,7 +698,7 @@ See `AGENTS.md` for the module-by-module layout.
 
 ## Disclaimer
 
-This tool generates and runs shell commands produced by a language model. Models hallucinate. Models misread context. The safety hard-stops and the confirm prompt are defense-in-depth, not a guarantee — anything you press `y` on runs with your shell's full privileges.
+This tool generates and runs shell commands produced by a language model. Models hallucinate. Models misread context. The safety hard-stops and the confirm prompt are defense-in-depth, not a guarantee. Anything you press `y` on runs with your shell's full privileges.
 
 **I am not responsible if you fuck your PC up with this tool.** Read the command on the line. If you don't understand it, don't run it. Use at your own risk.
 
