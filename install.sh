@@ -56,12 +56,42 @@ Environment:
 EOF
 }
 
+if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
+  BOLD=$(printf '\033[1m')
+  DIM=$(printf '\033[2m')
+  RED=$(printf '\033[31m')
+  GREEN=$(printf '\033[32m')
+  YELLOW=$(printf '\033[33m')
+  CYAN=$(printf '\033[36m')
+  RESET=$(printf '\033[0m')
+else
+  BOLD=
+  DIM=
+  RED=
+  GREEN=
+  YELLOW=
+  CYAN=
+  RESET=
+fi
+
 say() {
-  printf 'qsh install: %s\n' "$*" >&2
+  printf '%s%s==>%s %s\n' "$BOLD" "$CYAN" "$RESET" "$*" >&2
+}
+
+ok() {
+  printf ' %s✓%s %s\n' "$GREEN" "$RESET" "$*" >&2
+}
+
+warn() {
+  printf ' %s!%s %s\n' "$YELLOW" "$RESET" "$*" >&2
+}
+
+hint() {
+  printf '   %s%s%s\n' "$DIM" "$*" "$RESET" >&2
 }
 
 die() {
-  printf 'qsh install: error: %s\n' "$*" >&2
+  printf '%s%serror:%s %s\n' "$BOLD" "$RED" "$RESET" "$*" >&2
   exit 1
 }
 
@@ -170,12 +200,12 @@ verify_checksum() {
 
   actual=$(sha256_of "$archive" || true)
   if [ -z "$actual" ]; then
-    say "warning: no sha256 tool found; skipping checksum verification"
+    warn "no sha256 tool found; skipping checksum verification"
     return
   fi
 
   [ "$actual" = "$expected" ] || die "checksum mismatch for downloaded archive"
-  say "verified sha256 checksum"
+  ok "verified sha256 checksum"
 }
 
 download_qsh() {
@@ -201,7 +231,7 @@ download_qsh() {
   if download_file "$url.sha256" "$checksum_file"; then
     verify_checksum "$archive" "$checksum_file"
   else
-    say "warning: checksum asset not found; skipping checksum verification"
+    warn "checksum asset not found; skipping checksum verification"
   fi
 
   tar -xzf "$archive" -C "$TMP_DIR"
@@ -241,8 +271,54 @@ append_once() {
       printf '\n%s\n' "$marker"
       printf '%s\n' "$line"
     } >> "$rc_file"
-    say "added $label integration to $rc_file"
+    ok "added $label integration to $rc_file"
   fi
+}
+
+bin_dir_in_rc() {
+  rc_file=$1
+  [ -f "$rc_file" ] || return 1
+
+  grep -qF "$BIN_DIR" "$rc_file" && return 0
+
+  if [ -n "${HOME:-}" ]; then
+    case "$BIN_DIR" in
+      "$HOME"|"$HOME/"*)
+        rest=${BIN_DIR#$HOME}
+        grep -qF "\$HOME$rest" "$rc_file" && return 0
+        grep -qF "~$rest" "$rc_file" && return 0
+        ;;
+    esac
+  fi
+
+  return 1
+}
+
+append_path_once() {
+  rc_file=$1
+  marker=$2
+  line=$3
+  label=$4
+
+  if bin_dir_in_rc "$rc_file"; then
+    say "$label already references $BIN_DIR in $rc_file"
+    return
+  fi
+  append_once "$rc_file" "$marker" "$line" "$label"
+}
+
+append_integration_once() {
+  rc_file=$1
+  shell=$2
+  marker=$3
+  line=$4
+  label=$5
+
+  if [ -f "$rc_file" ] && grep -qE "qsh[[:space:]]+init[[:space:]]+$shell" "$rc_file"; then
+    say "$label integration already present in $rc_file"
+    return
+  fi
+  append_once "$rc_file" "$marker" "$line" "$label"
 }
 
 install_qsh() {
@@ -255,11 +331,11 @@ install_qsh() {
   mv -f "$tmp" "$dest"
 
   version=$("$QSH_SRC" --version 2>/dev/null || printf 'qsh unknown')
-  say "installed $version to $dest"
+  ok "installed $version to $dest"
 
   case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
-    *) say "warning: $BIN_DIR is not on PATH" ;;
+    *) warn "$BIN_DIR is not on PATH" ;;
   esac
 }
 
@@ -271,7 +347,7 @@ uninstall_qsh() {
   fi
 
   rm -f "$dest"
-  say "removed $dest"
+  ok "removed $dest"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -391,17 +467,20 @@ QSH_BIN="$BIN_DIR/qsh"
 
 if [ "$EDIT_ZSHRC" = 1 ]; then
   [ -n "${HOME:-}" ] || die "--zshrc needs HOME to be set"
-  append_once "$HOME/.zshrc" '# qsh zsh integration' "eval \"\$($QSH_BIN init zsh)\"" zsh
+  append_path_once "$HOME/.zshrc" '# qsh PATH' "export PATH=\"$BIN_DIR:\$PATH\"" "zsh PATH"
+  append_integration_once "$HOME/.zshrc" zsh '# qsh zsh integration' "eval \"\$($QSH_BIN init zsh)\"" zsh
 fi
 
 if [ "$EDIT_BASHRC" = 1 ]; then
   [ -n "${HOME:-}" ] || die "--bashrc needs HOME to be set"
-  append_once "$HOME/.bashrc" '# qsh bash integration' "eval \"\$($QSH_BIN init bash)\"" bash
+  append_path_once "$HOME/.bashrc" '# qsh PATH' "export PATH=\"$BIN_DIR:\$PATH\"" "bash PATH"
+  append_integration_once "$HOME/.bashrc" bash '# qsh bash integration' "eval \"\$($QSH_BIN init bash)\"" bash
 fi
 
 if [ "$EDIT_FISHRC" = 1 ]; then
   [ -n "${HOME:-}" ] || die "--fishrc needs HOME to be set"
-  append_once "$HOME/.config/fish/config.fish" '# qsh fish integration' "$QSH_BIN init fish | source" fish
+  append_path_once "$HOME/.config/fish/config.fish" '# qsh PATH' "fish_add_path $BIN_DIR" "fish PATH"
+  append_integration_once "$HOME/.config/fish/config.fish" fish '# qsh fish integration' "$QSH_BIN init fish | source" fish
 fi
 
 if [ "$EMIT_INIT" = 1 ]; then
@@ -409,7 +488,7 @@ if [ "$EMIT_INIT" = 1 ]; then
   "$QSH_BIN" init "$TARGET_SHELL"
 else
   say "add shell integration with one of:"
-  say "  eval \"\$($QSH_BIN init zsh)\""
-  say "  eval \"\$($QSH_BIN init bash)\""
-  say "  $QSH_BIN init fish | source"
+  hint "eval \"\$($QSH_BIN init zsh)\""
+  hint "eval \"\$($QSH_BIN init bash)\""
+  hint "$QSH_BIN init fish | source"
 fi
