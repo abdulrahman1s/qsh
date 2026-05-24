@@ -1,20 +1,40 @@
-use crate::cli::{InitArgs, Shell};
+use crate::cli::{Cli, InitArgs, Shell};
+use clap::CommandFactory;
+use clap_complete::{Shell as ClapShell, generate};
 
 pub fn init(args: InitArgs) -> i32 {
-    match args.shell {
-        Shell::Bash => {
-            println!("{}", BASH_INIT);
-            0
-        }
-        Shell::Fish => {
-            println!("{}", FISH_INIT);
-            0
-        }
-        Shell::Zsh => {
-            println!("{}", ZSH_INIT);
-            0
-        }
-    }
+    let wrapper = match args.shell {
+        Shell::Bash => BASH_INIT,
+        Shell::Fish => FISH_INIT,
+        Shell::Zsh => ZSH_INIT,
+    };
+    println!("{}", wrapper);
+    println!("{}", render_completion(args.shell));
+    0
+}
+
+fn render_completion(shell: Shell) -> String {
+    let mut cmd = Cli::command();
+    let mut buf: Vec<u8> = Vec::new();
+    let clap_shell = match shell {
+        Shell::Bash => ClapShell::Bash,
+        Shell::Fish => ClapShell::Fish,
+        Shell::Zsh => ClapShell::Zsh,
+    };
+    generate(clap_shell, &mut cmd, "qsh", &mut buf);
+    let mut script = String::from_utf8(buf).unwrap_or_default();
+
+    // Mirror completion onto the `?` / `??` aliases so `<tab>` works there too.
+    // zsh: alias `?` resolves to `noglob qsh`; `compdef` registers _qsh for the alias name.
+    // bash: alias `?` runs `__qsh_pre_noglob; qsh`; completion keys off the first word.
+    // fish: `?` and `??` are functions; `--wraps qsh` delegates completion.
+    let aliasing = match shell {
+        Shell::Zsh => "\ncompdef _qsh '?' '??'\n",
+        Shell::Bash => "\ncomplete -F _qsh -o nosort -o bashdefault -o default '?' '??'\n",
+        Shell::Fish => "\ncomplete -c '?' --wraps qsh\ncomplete -c '??' --wraps qsh\n",
+    };
+    script.push_str(aliasing);
+    script
 }
 
 // Zsh wrapper. The strategy:
@@ -223,7 +243,8 @@ end
 
 #[cfg(test)]
 mod tests {
-    use super::{BASH_INIT, FISH_INIT, ZSH_INIT};
+    use super::{BASH_INIT, FISH_INIT, ZSH_INIT, render_completion};
+    use crate::cli::Shell;
 
     #[test]
     fn zsh_init_does_not_reference_bash_glob_restore_helper() {
@@ -246,5 +267,27 @@ mod tests {
         assert!(FISH_INIT.contains("function '??' --description 'qsh smart mode'"));
         assert!(!FISH_INIT.contains("abbr --add"));
         assert!(!FISH_INIT.contains("__qsh_restore_glob"));
+    }
+
+    #[test]
+    fn zsh_completion_registers_question_mark_aliases() {
+        let script = render_completion(Shell::Zsh);
+        assert!(script.contains("_qsh()"));
+        assert!(script.contains("compdef _qsh '?' '??'"));
+    }
+
+    #[test]
+    fn bash_completion_registers_question_mark_aliases() {
+        let script = render_completion(Shell::Bash);
+        assert!(script.contains("_qsh()"));
+        assert!(script.contains("complete -F _qsh -o nosort -o bashdefault -o default '?' '??'"));
+    }
+
+    #[test]
+    fn fish_completion_wraps_question_mark_functions() {
+        let script = render_completion(Shell::Fish);
+        assert!(script.contains("complete -c qsh"));
+        assert!(script.contains("complete -c '?' --wraps qsh"));
+        assert!(script.contains("complete -c '??' --wraps qsh"));
     }
 }
