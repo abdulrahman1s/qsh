@@ -1,5 +1,5 @@
 {
-  description = "AI shell-command generator for zsh and bash";
+  description = "AI shell-command generator for zsh, bash, and fish";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -44,7 +44,7 @@
           cargoLock.lockFile = ./Cargo.lock;
 
           meta = {
-            description = "AI shell-command generator for zsh and bash";
+            description = "AI shell-command generator for zsh, bash, and fish";
             mainProgram = cargoToml.package.name;
             platforms = lib.platforms.unix;
           };
@@ -246,6 +246,12 @@
               default = false;
               description = "Add qsh bash integration to interactive shells.";
             };
+
+            enableFishIntegration = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Add qsh fish integration to interactive shells.";
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -268,6 +274,10 @@
 
             programs.bash.interactiveShellInit = lib.mkIf cfg.enableBashIntegration (lib.mkAfter ''
               eval "$(${lib.getExe package} init bash)"
+            '');
+
+            programs.fish.interactiveShellInit = lib.mkIf cfg.enableFishIntegration (lib.mkAfter ''
+              ${lib.getExe package} init fish | source
             '');
           };
         };

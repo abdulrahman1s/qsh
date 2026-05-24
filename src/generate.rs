@@ -678,7 +678,7 @@ Stdin:
   Anything piped to `?` is included as context.
 
 Other:
-  --shell SHELL        Wrapper shell context: zsh or bash (default: zsh)
+  --shell SHELL        Wrapper shell context: zsh, bash, or fish (default: zsh)
   -m, --model MODEL     Override the model name for the chosen provider
   -e, --explain         Append a `# why: …` shell comment explaining the command
   -d, --debug           Print context, request JSON, and raw response to stderr

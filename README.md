@@ -1,6 +1,6 @@
 # qsh
 
-A standalone binary that turns natural-language descriptions into shell commands using Gemini, OpenAI, Claude, or local Ollama. You see every command before it runs. Works in zsh and bash.
+A standalone binary that turns natural-language descriptions into shell commands using Gemini, OpenAI, Claude, or local Ollama. You see every command before it runs. Works in zsh, bash, and fish.
 
 ```
 ? find files larger than 1GB
@@ -18,7 +18,7 @@ Run?  [Y]es  [N]o  [E]dit  [R]efine  [?]
 - **Four providers, one interface.** Gemini, OpenAI, Anthropic, and local Ollama are all supported. Auto-detects from API keys first, then a configured or installed Ollama model.
 - **Fast and smart modes.** `?` for low-reasoning, sub-second answers. `??` for extended-thinking on harder asks ("design a one-liner to dedupe by hash and keep newest").
 - **Confirm-before-run.** Every generated command is shown and requires `y` to execute. Default action on plain Enter is decline.
-- **Edit before run.** Press `e` at the prompt to drop into the shell's line editor (`vared` in zsh, `read -e` in bash) and tweak the command in place. Edits are persisted to cache so the next identical query returns your fix.
+- **Edit before run.** Press `e` at the prompt to tweak the command in place. Edits are persisted to cache so the next identical query returns your fix.
 - **Refine on demand.** Press `r` to re-prompt the model with a follow-up directive ("case-insensitive", "exclude node_modules", "do it with ripgrep instead") while preserving the original intent.
 - **Failure-aware retry.** If a command run through `?` fails, a bare `?` within 10 minutes replays the _original intent_ plus the last 3 failed attempts (each with their stderr) so the model can fix what broke without re-cycling through approaches it already tried.
 - **Stdin context.** Anything piped in is included as context. `git status | ? what should I do`, `cat err.log | ? why is this failing`.
@@ -58,7 +58,15 @@ echo 'eval "$(qsh init bash)"' >> ~/.bashrc
 exec bash
 ```
 
+```fish
+mkdir -p ~/.config/fish
+echo 'qsh init fish | source' >> ~/.config/fish/config.fish
+exec fish
+```
+
 New shells will have `qsh`, `?`, and `??` available.
+Fish installs `?` and `??` as functions.
+Quote glob patterns in Fish queries when you want the model to see them literally, such as `? find "*.rs"`.
 
 ### Nix flakes
 
@@ -84,6 +92,7 @@ In a NixOS flake, add this repo as an input and enable the module:
             enable = true;
             enableZshIntegration = true;
             # enableBashIntegration = true;
+            # enableFishIntegration = true;
           };
         }
       ];
@@ -114,7 +123,7 @@ nix store prefetch-file --json \
 
 ### Provider setup
 
-Set at least one hosted-provider API key or an Ollama model in your shell environment (`~/.zshrc`, `~/.zshenv`, `~/.bashrc`, or your secrets file of choice):
+Set at least one hosted-provider API key or an Ollama model in your shell environment (`~/.zshrc`, `~/.zshenv`, `~/.bashrc`, `~/.config/fish/config.fish`, or your secrets file of choice):
 
 ```sh
 export GEMINI_API_KEY="..."        # https://aistudio.google.com/apikey
@@ -124,6 +133,7 @@ export OLLAMA_MODEL="qwen3:8b"     # optional local provider default
 ```
 
 Auto-detect order is `gemini > claude > openai > ollama`. If multiple providers are available, pin your default explicitly with `export QSH_PROVIDER=claude`.
+In fish, use `set -gx NAME "..."` instead of `export NAME="..."`.
 
 Ollama uses `http://127.0.0.1:11434` by default. Override it with `OLLAMA_HOST` or `OLLAMA_BASE_URL`; either `host:port`, `http://host:port`, or a base ending in `/v1` works.
 
@@ -356,7 +366,7 @@ If retries are heading the wrong direction, type a normal `?` query to start ove
 
 ### Edit before running — press `e`
 
-Drops you into the shell's line editor on the candidate command. Tweak a path, swap a flag, then Enter to run. **Edits are persisted to cache** — next time you ask the same question, you get your edit, not the model's original.
+Drops you into an inline editor on the candidate command. Tweak a path, swap a flag, then Enter to run. **Edits are persisted to cache** — next time you ask the same question, you get your edit, not the model's original.
 
 ```
 $ ? show top memory hogs
@@ -487,7 +497,7 @@ This is a defense-in-depth layer, not a guarantee. **You** see every command bef
 <details>
 <summary><b>Click to expand</b></summary>
 
-- **zsh** 5.x+ or **bash** 4+ for the shell wrapper.
+- **zsh** 5.x+, **bash** 4+, or **fish** 3.x+ for the shell wrapper.
 - An **API key** for at least one hosted provider, or a local **Ollama** model.
 
 Optional but used by the tool or some generated commands: `fzf` (alternative picker), `ollama` (local provider auto-detect), `wl-copy`/`wl-paste` (Wayland clipboard), `gh` (GitHub CLI), `ffmpeg`, `yt-dlp`. The model is told what's available; missing tools just mean the model picks an alternative.
@@ -506,7 +516,7 @@ Optional but used by the tool or some generated commands: `fzf` (alternative pic
 3. **Look up** a sha256 cache key over `(provider, model, mode, system prompt, task)`. If hit, skip to step 6.
 4. **Stream** the request to the chosen provider's endpoint. Hosted providers use their native streaming APIs; Ollama uses its OpenAI-compatible `/v1/chat/completions` endpoint. Show a spinner until the first delta lands; then typewrite the response.
 5. **Strip** stray markdown fences, save the cleaned command to cache.
-6. **Confirm** with `y/n/e/r`. On `e`, drop into the shell's line editor. On `r`, rebuild the task with the original intent + previous candidate + refinement directive, loop back to step 3.
+6. **Confirm** with `y/n/e/r`. On `e`, drop into the inline editor. On `r`, rebuild the task with the original intent + previous candidate + refinement directive, loop back to step 3.
 7. **Run** via `eval` in the user's current shell with stderr captured to a tempfile. On failure, the wrapper calls `qsh record`, which writes a JSONL entry to `.last_attempts.jsonl` (capped at 3 entries, last 4KB of stderr each) so a subsequent bare `?` can replay the failure as context.
 
 ```text
@@ -609,6 +619,12 @@ eval "$(target/release/qsh init zsh)"
 
 target/release/qsh init bash
 eval "$(qsh init bash)"
+
+target/release/qsh init fish
+```
+
+```fish
+qsh init fish | source
 ```
 
 ### Inspect what the model will see

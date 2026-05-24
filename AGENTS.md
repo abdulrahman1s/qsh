@@ -1,20 +1,20 @@
 # AGENTS.md
 
-`qsh` is a zsh-first AI shell-command generator with a bash wrapper.
+`qsh` is a zsh-first AI shell-command generator with bash and Fish wrappers.
 It is a standalone binary that prints shell init code, generates one
 candidate command at a time, records failed eval attempts, and keeps all
 interactive UI on stderr.
 
 ## What kind of project this is
 
-- **Daily-driver shell tool.** zsh is the primary target; bash is also
-  supported through the generated wrapper.
+- **Daily-driver shell tool.** zsh is the primary target; bash and Fish
+  are also supported through generated wrappers.
 - **Single binary.** `qsh` has three subcommands: `generate`, `record`,
   and `init`. There is no library surface.
 - **Shell wrapper holds eval/history.** `qsh generate` writes the
-  accepted command to stdout; the wrapper printed by `qsh init zsh` or
-  `qsh init bash` evaluates it in the user's current shell, captures
-  stderr, and feeds retry state back via `qsh record`.
+  accepted command to stdout; the wrapper printed by `qsh init zsh`,
+  `qsh init bash`, or `qsh init fish` evaluates it in the user's current
+  shell, captures stderr, and feeds retry state back via `qsh record`.
 - **Stderr is the UI surface.** Status, spinner, typewriter playback,
   confirm prompt, debug dumps, and errors go to stderr. Stdout is
   reserved for the final command.
@@ -40,7 +40,7 @@ src/
   alts.rs             sentinel-delimited multi-candidate parse + dedupe
   clean.rs            strip fences, leading $/%, why-comment
   ui.rs               spinner, typewriter, confirm prompt, fzf picker
-  shell.rs            init zsh/bash wrapper scripts
+  shell.rs            init zsh/bash/fish wrapper scripts
   record.rs           record subcommand (called by wrapper)
   generate.rs         glue: parse -> context -> resolve -> loop -> print
   xml_escape.rs       escape `& < > "` for embedding in <file>/<stdin> tags
@@ -89,6 +89,9 @@ eval "$(target/release/qsh init zsh)"
 
 target/release/qsh init bash
 bash -n <(target/release/qsh init bash)
+
+target/release/qsh init fish
+target/release/qsh init fish | fish -n
 ```
 
 **Add a provider**

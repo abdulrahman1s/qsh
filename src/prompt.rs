@@ -12,6 +12,8 @@ pub fn system_prompt(env: &EnvInfo, shell: Shell) -> String {
     SYSTEM_PROMPT_TEMPLATE
         .replace("__SHELL_NAME__", shell.as_str())
         .replace("__SHELL_DESCRIPTION__", shell_description(shell))
+        .replace("__SHELL_SYNTAX__", shell_syntax(shell))
+        .replace("__SHELL_EXAMPLES__", shell_examples(shell))
         .replace("__OS_PRETTY__", &env.os_pretty)
         .replace("__OS_KIND__", &env.os_kind)
         .replace("__CLIPBOARD_LINE__", &env.clipboard_line)
@@ -23,6 +25,103 @@ fn shell_description(shell: Shell) -> &'static str {
     match shell {
         Shell::Zsh => "zsh with EXTENDED_GLOB, NOMATCH, AUTOCD",
         Shell::Bash => "bash with standard Bash semantics",
+        Shell::Fish => "fish with native Fish syntax and command substitutions",
+    }
+}
+
+fn shell_syntax(shell: Shell) -> &'static str {
+    match shell {
+        Shell::Zsh | Shell::Bash => {
+            "- Use POSIX-style shell syntax unless the request clearly needs a shell-specific feature.\n- Command substitution is `$(...)`; variables are `$name` or `${name}`; loops use `for x in ...; do ...; done`.\n- Use `&&` and `||` for conditional chaining."
+        }
+        Shell::Fish => {
+            "- Generate Fish syntax, not POSIX sh/bash syntax.\n- Command substitution is `(...)`, not `$(...)`; variables are `$name`, not `${name}`.\n- Loops and conditionals use Fish blocks: `for x in ...; ...; end` and `if ...; ...; end`. There is no `do`, `then`, or `fi`.\n- Use `set` for variables and `env NAME=value command` for one-shot environment variables.\n- Prefer `and` and `or` for conditional chaining."
+        }
+    }
+}
+
+fn shell_examples(shell: Shell) -> &'static str {
+    match shell {
+        Shell::Zsh | Shell::Bash => {
+            r#"INPUT: find rust files modified in the last week
+OUTPUT: find . -type f -name '*.rs' -mtime -7
+
+INPUT: kill whatever is listening on port 3000
+OUTPUT: kill -9 "$(lsof -t -i:3000)"
+
+INPUT: 10 largest files under this directory
+OUTPUT: du -ah . 2>/dev/null | sort -rh | head -10
+
+INPUT: tmp gb
+OUTPUT: du -x --si -d1 /tmp 2>/dev/null | sort -hr | head -20
+
+INPUT: largest folders here
+OUTPUT: du -x --si -d1 . 2>/dev/null | sort -hr | head -20
+
+INPUT: pretty-print package.json dependencies
+OUTPUT: jq '.dependencies' package.json
+
+INPUT: follow nginx logs
+OUTPUT: journalctl -u nginx -b -f --no-hostname
+
+INPUT: extract every .tar.gz here into its own folder
+OUTPUT: for f in *.tar.gz; do mkdir -p "${f%.tar.gz}" && tar -xzf "$f" -C "${f%.tar.gz}"; done
+
+INPUT: count lines of typescript code excluding node_modules
+OUTPUT: find . -type f \( -name '*.ts' -o -name '*.tsx' \) -not -path '*/node_modules/*' -exec wc -l '{}' +
+
+INPUT: copy current branch name to clipboard
+OUTPUT: git rev-parse --abbrev-ref HEAD | tr -d '\n' | wl-copy
+
+INPUT: replace all tabs with 2 spaces in every js file under src
+OUTPUT: find src -type f -name '*.js' -exec sed -i 's/\t/  /g' '{}' +
+
+INPUT: search for TODO comments in this repo, ignoring git directory
+OUTPUT: grep -rn --exclude-dir=.git 'TODO' .
+
+INPUT: download a url to disk
+OUTPUT: curl -fLo file.bin https://example.com/file.bin"#
+        }
+        Shell::Fish => {
+            r#"INPUT: find rust files modified in the last week
+OUTPUT: find . -type f -name '*.rs' -mtime -7
+
+INPUT: kill whatever is listening on port 3000
+OUTPUT: kill -9 (lsof -t -i:3000)
+
+INPUT: 10 largest files under this directory
+OUTPUT: du -ah . 2>/dev/null | sort -rh | head -10
+
+INPUT: tmp gb
+OUTPUT: du -x --si -d1 /tmp 2>/dev/null | sort -hr | head -20
+
+INPUT: largest folders here
+OUTPUT: du -x --si -d1 . 2>/dev/null | sort -hr | head -20
+
+INPUT: pretty-print package.json dependencies
+OUTPUT: jq '.dependencies' package.json
+
+INPUT: follow nginx logs
+OUTPUT: journalctl -u nginx -b -f --no-hostname
+
+INPUT: extract every .tar.gz here into its own folder
+OUTPUT: for f in *.tar.gz; set -l d (string replace -r '\.tar\.gz$' '' -- "$f"); mkdir -p "$d"; and tar -xzf "$f" -C "$d"; end
+
+INPUT: count lines of typescript code excluding node_modules
+OUTPUT: find . -type f \( -name '*.ts' -o -name '*.tsx' \) -not -path '*/node_modules/*' -exec wc -l '{}' +
+
+INPUT: copy current branch name to clipboard
+OUTPUT: git rev-parse --abbrev-ref HEAD | tr -d '\n' | wl-copy
+
+INPUT: replace all tabs with 2 spaces in every js file under src
+OUTPUT: find src -type f -name '*.js' -exec sed -i 's/\t/  /g' '{}' +
+
+INPUT: search for TODO comments in this repo, ignoring git directory
+OUTPUT: grep -rn --exclude-dir=.git 'TODO' .
+
+INPUT: download a url to disk
+OUTPUT: curl -fLo file.bin https://example.com/file.bin"#
+        }
     }
 }
 
@@ -118,6 +217,20 @@ mod tests {
         assert!(sys.contains("Shell: bash with standard Bash semantics."));
         assert!(!sys.contains("EXTENDED_GLOB"));
         assert!(!sys.contains("__SHELL_DESCRIPTION__"));
+    }
+
+    #[test]
+    fn placeholders_substituted_for_fish() {
+        let sys = system_prompt(&env_info(), Shell::Fish);
+        assert!(sys.contains("deterministic fish command generator"));
+        assert!(sys.contains("the user's fish shell"));
+        assert!(sys.contains("Shell: fish with native Fish syntax"));
+        assert!(sys.contains("Command substitution is `(...)`, not `$(...)`"));
+        assert!(sys.contains("There is no `do`, `then`, or `fi`."));
+        assert!(sys.contains("OUTPUT: kill -9 (lsof -t -i:3000)"));
+        assert!(sys.contains("for f in *.tar.gz; set -l d"));
+        assert!(!sys.contains("__SHELL_SYNTAX__"));
+        assert!(!sys.contains("__SHELL_EXAMPLES__"));
     }
 
     #[test]

@@ -6,6 +6,10 @@ pub fn init(args: InitArgs) -> i32 {
             println!("{}", BASH_INIT);
             0
         }
+        Shell::Fish => {
+            println!("{}", FISH_INIT);
+            0
+        }
         Shell::Zsh => {
             println!("{}", ZSH_INIT);
             0
@@ -143,9 +147,83 @@ alias "?"="__qsh_pre_noglob; qsh"
 alias "??"="__qsh_pre_noglob; qsh --smart"
 "#;
 
+// Fish wrapper. Fish uses native syntax for the function body and defines
+// `?`/`??` as functions instead of abbreviations so the command line is not
+// rewritten before execution.
+const FISH_INIT: &str = r#"# qsh fish integration. Source this from your config.fish:
+#   qsh init fish | source
+
+function qsh
+    set -l subcmd ""
+    if set -q argv[1]
+        set subcmd $argv[1]
+    end
+
+    switch "$subcmd"
+        case generate record init -h --help -V --version
+            command qsh $argv
+            return $status
+    end
+
+    set -l cmd_file (mktemp)
+    or return 1
+    set -l err_file (mktemp)
+    or begin
+        set -l rc $status
+        rm -f -- "$cmd_file"
+        return $rc
+    end
+
+    command qsh generate --shell fish $argv >"$cmd_file"
+    set -l rc $status
+    if test $rc -ne 0
+        rm -f -- "$cmd_file" "$err_file"
+        return $rc
+    end
+
+    set -l cmd (cat "$cmd_file")
+    if test -z "$cmd"
+        rm -f -- "$cmd_file" "$err_file"
+        return 0
+    end
+
+    set -l hist_cmd (string replace -r ' [#].*$' '' -- "$cmd" | string trim -r)
+    if test -n "$hist_cmd"
+        history append -- "$hist_cmd" >/dev/null 2>&1
+    end
+
+    begin
+        eval "$cmd" 3>&1 1>&4 2>&3 | tee -- "$err_file" >&2
+        set rc $pipestatus[1]
+    end 4>&1
+
+    set -l last_task ""
+    if test -f "$cmd_file.task"
+        set last_task (cat "$cmd_file.task")
+    end
+
+    command qsh record --cmd "$cmd" --status "$rc" --stderr-file "$err_file" --original-task "$last_task" >/dev/null 2>&1; or true
+    rm -f -- "$cmd_file" "$err_file"
+    return $rc
+end
+
+abbr --erase '?' >/dev/null 2>&1
+abbr --erase '??' >/dev/null 2>&1
+functions --erase '?' >/dev/null 2>&1
+functions --erase '??' >/dev/null 2>&1
+
+function '?' --description 'qsh fast mode'
+    qsh $argv
+end
+
+function '??' --description 'qsh smart mode'
+    qsh --smart $argv
+end
+"#;
+
 #[cfg(test)]
 mod tests {
-    use super::{BASH_INIT, ZSH_INIT};
+    use super::{BASH_INIT, FISH_INIT, ZSH_INIT};
 
     #[test]
     fn zsh_init_does_not_reference_bash_glob_restore_helper() {
@@ -158,5 +236,15 @@ mod tests {
         assert!(BASH_INIT.contains("__qsh_restore_glob()"));
         assert!(BASH_INIT.contains("qsh() {\n  __qsh_restore_glob\n\n  case \"$1\" in"));
         assert!(BASH_INIT.contains(r#"alias "?"="__qsh_pre_noglob; qsh""#));
+    }
+
+    #[test]
+    fn fish_init_uses_fish_shell_context_and_question_mark_functions() {
+        assert!(FISH_INIT.contains("command qsh generate --shell fish $argv"));
+        assert!(FISH_INIT.contains("abbr --erase '?'"));
+        assert!(FISH_INIT.contains("function '?' --description 'qsh fast mode'"));
+        assert!(FISH_INIT.contains("function '??' --description 'qsh smart mode'"));
+        assert!(!FISH_INIT.contains("abbr --add"));
+        assert!(!FISH_INIT.contains("__qsh_restore_glob"));
     }
 }

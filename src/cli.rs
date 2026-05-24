@@ -25,6 +25,7 @@ pub enum Command {
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shell {
     Bash,
+    Fish,
     Zsh,
 }
 
@@ -32,6 +33,7 @@ impl Shell {
     pub fn as_str(self) -> &'static str {
         match self {
             Shell::Bash => "bash",
+            Shell::Fish => "fish",
             Shell::Zsh => "zsh",
         }
     }
