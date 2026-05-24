@@ -20,6 +20,8 @@ pub enum Command {
     Record(RecordArgs),
     /// Print shell init script (function definition + alias).
     Init(InitArgs),
+    /// Manage the ~/.qsh_known list of detected tools.
+    Known(KnownArgs),
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +45,13 @@ impl Shell {
 pub struct InitArgs {
     #[arg(value_enum)]
     pub shell: Shell,
+}
+
+#[derive(Args, Debug)]
+pub struct KnownArgs {
+    /// Re-scan and overwrite ~/.qsh_known.
+    #[arg(short = 'r', long = "refresh")]
+    pub refresh: bool,
 }
 
 #[derive(Args, Debug)]

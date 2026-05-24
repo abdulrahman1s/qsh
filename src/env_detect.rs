@@ -1,6 +1,8 @@
 use std::env;
 use std::fs;
 
+use crate::known;
+
 #[derive(Debug, Clone)]
 pub struct EnvInfo {
     pub os_pretty: String,
@@ -8,7 +10,19 @@ pub struct EnvInfo {
     pub pkg_rule: String,
     pub clipboard_line: String,
     pub clipboard_tools: String,
+    pub system_tools: String,
+    pub disk_usage_hint: String,
+    pub known_tools: String,
 }
+
+const LINUX_SYSTEM_TOOLS: &str = "systemctl, journalctl, htop, lsof, killall, pstree, fuser, lsusb";
+const MACOS_SYSTEM_TOOLS: &str =
+    "launchctl, log show, log stream, lsof, killall, pgrep, pkill, system_profiler, pmset, top";
+const BSD_SYSTEM_TOOLS: &str = "service, lsof, killall, pgrep, pkill, top";
+const UNKNOWN_SYSTEM_TOOLS: &str = "lsof, killall, pgrep, pkill, top";
+
+const GNU_DISK_USAGE_HINT: &str = "For terse disk-usage requests, infer common paths literally: \"tmp\" means /tmp, not the current directory. Prefer one-level summaries such as `du -x --si -d1 PATH 2>/dev/null | sort -hr | head -20`; they are bounded, readable, and still show useful smaller entries. Do not use `du -sh . | grep ...`: it can scan a huge tree silently and then print nothing.\n- If the user says GB/gb in a disk-usage request, prefer decimal SI output (`du --si`) over filtering only lines with a G suffix, unless they explicitly ask for only GB-sized entries.";
+const BSD_DISK_USAGE_HINT: &str = "For terse disk-usage requests, infer common paths literally: \"tmp\" means /tmp, not the current directory. Prefer one-level summaries such as `du -h -x -d1 PATH 2>/dev/null | sort -hr | head -20`; they are bounded, readable, and still show useful smaller entries. BSD `du` has no `--si` — use `-h` (binary units) instead. Do not use `du -sh . | grep ...`: it can scan a huge tree silently and then print nothing.\n- If the user says GB/gb in a disk-usage request, prefer human-readable output (`du -h`) over filtering only lines with a G suffix, unless they explicitly ask for only GB-sized entries.";
 
 fn has_cmd(name: &str) -> bool {
     which::which(name).is_ok()
@@ -111,6 +125,27 @@ fn clipboard_for_unix() -> (String, String) {
 
 pub fn detect() -> EnvInfo {
     let ostype = std::env::consts::OS;
+    let mut info = detect_os(ostype);
+    info.known_tools = format_known_tools(&known::load_or_refresh());
+    info
+}
+
+fn format_known_tools(list: &[String]) -> String {
+    let grouped = known::categorize(list);
+    if grouped.is_empty() {
+        return "(none detected)".to_string();
+    }
+    let mut out = String::new();
+    for (label, tools) in &grouped {
+        out.push_str("\n    - ");
+        out.push_str(label);
+        out.push_str(": ");
+        out.push_str(&tools.join(", "));
+    }
+    out
+}
+
+fn detect_os(ostype: &str) -> EnvInfo {
     match ostype {
         "macos" => {
             let pkg_rule = if has_cmd("brew") {
@@ -124,6 +159,9 @@ pub fn detect() -> EnvInfo {
                 pkg_rule: pkg_rule.into(),
                 clipboard_line: "macOS pasteboard — use 'pbcopy' to copy, 'pbpaste' to paste.".into(),
                 clipboard_tools: "pbcopy, pbpaste (macOS)".into(),
+                system_tools: MACOS_SYSTEM_TOOLS.into(),
+                disk_usage_hint: BSD_DISK_USAGE_HINT.into(),
+                known_tools: String::new(),
             }
         }
         "linux" => {
@@ -138,6 +176,9 @@ pub fn detect() -> EnvInfo {
                 pkg_rule: pkg_rule.into(),
                 clipboard_line,
                 clipboard_tools,
+                system_tools: LINUX_SYSTEM_TOOLS.into(),
+                disk_usage_hint: GNU_DISK_USAGE_HINT.into(),
+                known_tools: String::new(),
             }
         }
         "freebsd" | "openbsd" | "netbsd" | "dragonfly" => {
@@ -148,6 +189,9 @@ pub fn detect() -> EnvInfo {
                 pkg_rule: "This is BSD — when a tool is genuinely missing, the install command is 'sudo pkg install <pkg>'. BSD userland differs from GNU; use POSIX-portable flags.".into(),
                 clipboard_line,
                 clipboard_tools,
+                system_tools: BSD_SYSTEM_TOOLS.into(),
+                disk_usage_hint: BSD_DISK_USAGE_HINT.into(),
+                known_tools: String::new(),
             }
         }
         other => EnvInfo {
@@ -156,6 +200,9 @@ pub fn detect() -> EnvInfo {
             pkg_rule: "Unknown OS — don't suggest install commands; pick guaranteed-available POSIX tools.".into(),
             clipboard_line: "No clipboard tool assumed — avoid clipboard commands unless the user explicitly names a tool.".into(),
             clipboard_tools: "none assumed".into(),
+            system_tools: UNKNOWN_SYSTEM_TOOLS.into(),
+            disk_usage_hint: BSD_DISK_USAGE_HINT.into(),
+            known_tools: String::new(),
         },
     }
 }

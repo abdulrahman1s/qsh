@@ -18,6 +18,9 @@ pub fn system_prompt(env: &EnvInfo, shell: Shell) -> String {
         .replace("__OS_KIND__", &env.os_kind)
         .replace("__CLIPBOARD_LINE__", &env.clipboard_line)
         .replace("__CLIPBOARD_TOOLS__", &env.clipboard_tools)
+        .replace("__SYSTEM_TOOLS__", &env.system_tools)
+        .replace("__DISK_USAGE_HINT__", &env.disk_usage_hint)
+        .replace("__KNOWN_TOOLS__", &env.known_tools)
         .replace("__PKG_RULE__", &env.pkg_rule)
 }
 
@@ -194,6 +197,9 @@ mod tests {
             pkg_rule: "no-install".into(),
             clipboard_line: "no-clip".into(),
             clipboard_tools: "none".into(),
+            system_tools: "test-tools".into(),
+            disk_usage_hint: "test-disk-hint".into(),
+            known_tools: "test-known".into(),
         }
     }
 
@@ -205,8 +211,14 @@ mod tests {
         assert!(sys.contains("TestOS"));
         assert!(sys.contains("no-clip"));
         assert!(sys.contains("no-install"));
+        assert!(sys.contains("test-tools"));
+        assert!(sys.contains("test-disk-hint"));
+        assert!(sys.contains("test-known"));
         assert!(!sys.contains("__OS_PRETTY__"));
         assert!(!sys.contains("__SHELL_NAME__"));
+        assert!(!sys.contains("__SYSTEM_TOOLS__"));
+        assert!(!sys.contains("__DISK_USAGE_HINT__"));
+        assert!(!sys.contains("__KNOWN_TOOLS__"));
     }
 
     #[test]
