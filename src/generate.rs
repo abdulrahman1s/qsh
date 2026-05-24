@@ -349,14 +349,11 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
 
     // Split task vs ./file refs.
     let mut task_words: Vec<String> = Vec::new();
-    let mut file_paths: Vec<String> = Vec::new();
+    let mut file_refs: Vec<files::FileRef> = Vec::new();
     for arg in args.task.iter() {
-        if arg.starts_with("./") && arg.len() > 2 {
-            let p = Path::new(arg);
-            if p.is_file() {
-                file_paths.push(arg.clone());
-                continue;
-            }
+        if let Some(fr) = files::parse_path_arg(arg) {
+            file_refs.push(fr);
+            continue;
         }
         task_words.push(arg.clone());
     }
@@ -373,8 +370,8 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
     }
 
     // Read files for context.
-    let file_block = if !file_paths.is_empty() {
-        let b = files::read_files(&file_paths);
+    let file_block = if !file_refs.is_empty() {
+        let b = files::read_files(&file_refs);
         for line in b.info.lines() {
             ui::info(line);
         }
@@ -437,7 +434,7 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         if ctx.is_empty() {
             task = user_task.clone();
         } else {
-            let hint = if !stdin_data.is_empty() && !file_paths.is_empty() {
+            let hint = if !stdin_data.is_empty() && !file_refs.is_empty() {
                 "(figure out what to do with the stdin and files)"
             } else if !stdin_data.is_empty() {
                 "(figure out what to do with the stdin context)"
@@ -455,8 +452,8 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         if !stdin_data.is_empty() {
             stub.push_str("stdin ");
         }
-        if let Some(f) = file_paths.first() {
-            stub.push_str(f);
+        if let Some(f) = file_refs.first() {
+            stub.push_str(&f.display);
             stub.push(' ');
         }
         original_task = if !user_task.is_empty() {
@@ -665,6 +662,7 @@ Cache:
 Context:
   --no-context          Skip cwd-aware context (git branch, language manifests, build/test tooling)
   ./<path>              Include the file at <path> as labelled context (first 32KB per file)
+                          Slice: ./path:N first N lines, ./path:-N last N, ./path:A-B inclusive range
   .qshrc                Per-project defaults — searched up from cwd.
 
 Alternatives:

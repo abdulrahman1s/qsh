@@ -224,6 +224,21 @@ Any argument starting with `./` and pointing at a readable file is loaded inline
 
 A `./token` that doesn't resolve to a file falls through as literal task text. Directories are ignored on purpose (you probably wanted a specific file).
 
+**Line slicing.** Append a colon-suffix to a file ref to send only part of the file:
+
+| Syntax              | What it sends                            |
+| ------------------- | ---------------------------------------- |
+| `./file.log:50`     | First 50 lines                           |
+| `./file.log:-50`    | Last 50 lines (like `tail -n 50`)        |
+| `./file.log:120-180`| Lines 120 through 180 inclusive          |
+
+```sh
+? ./build.log:-100 why is this failing
+? ./schema.sql:1-40 ./schema.sql:-20 summarise the head and tail
+```
+
+Slices still count against the 32 KB total budget; if a slice would overflow it, the read is truncated and the info line says so. A path that happens to literally end in `:N` is read whole when it exists on disk, so the slice form only kicks in when the bare path doesn't resolve.
+
 File context plays nicely with stdin and `--explain`:
 
 ```sh
@@ -465,6 +480,7 @@ Cache:
 Context:
   --no-context          Skip cwd-aware project-context injection
   ./<path>              Include a file as labelled context (32 KB cap)
+                          Slice: ./path:N first N lines, ./path:-N last N, ./path:A-B inclusive range
   .qshrc                Per-project defaults — see below
 
 Alternatives:
