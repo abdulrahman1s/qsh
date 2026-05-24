@@ -56,17 +56,20 @@
           hash,
           owner ? releaseOwner,
           repo ? releaseRepo,
-          target ? prebuiltTargets.${pkgs.system} or (throw "No qsh prebuilt target for ${pkgs.system}"),
+          target ?
+            prebuiltTargets.${pkgs.stdenv.hostPlatform.system}
+              or (throw "No qsh prebuilt target for ${pkgs.stdenv.hostPlatform.system}"),
           url ? null,
         }:
         let
+          system = pkgs.stdenv.hostPlatform.system;
           releaseVersion = lib.removePrefix "v" version;
           releaseTag = "v${releaseVersion}";
           archiveUrl =
             if url != null then
               url
             else if target == null then
-              throw "No qsh prebuilt target was provided for ${pkgs.system}"
+              throw "No qsh prebuilt target was provided for ${system}"
             else
               "https://github.com/${owner}/${repo}/releases/download/${releaseTag}/${cargoToml.package.name}-${releaseTag}-${target}.tar.gz";
         in
@@ -79,6 +82,7 @@
             hash = if hash == "" then lib.fakeHash else hash;
           };
 
+          sourceRoot = ".";
           dontConfigure = true;
           dontBuild = true;
 
@@ -145,9 +149,14 @@
         }
       );
 
-      overlays.default = final: _prev: {
-        qsh = self.packages.${final.system}.default;
-      };
+      overlays.default =
+        final: _prev:
+        let
+          system = final.stdenv.hostPlatform.system;
+        in
+        {
+          qsh = self.packages.${system}.default;
+        };
 
       nixosModules.default =
         {
@@ -158,6 +167,7 @@
         }:
         let
           cfg = config.programs.qsh;
+          system = pkgs.stdenv.hostPlatform.system;
           prebuiltPackage = mkPrebuiltPackage pkgs {
             inherit (cfg.prebuilt)
               hash
@@ -176,7 +186,7 @@
 
             package = lib.mkOption {
               type = lib.types.package;
-              default = self.packages.${pkgs.system}.default;
+              default = self.packages.${system}.default;
               defaultText = "self.packages.<system>.default";
               description = "The qsh package to install.";
             };
@@ -212,8 +222,8 @@
 
               target = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
-                default = prebuiltTargets.${pkgs.system} or null;
-                defaultText = "the GitHub release target for pkgs.system";
+                default = prebuiltTargets.${system} or null;
+                defaultText = "the GitHub release target for the host platform";
                 description = "Release artifact target triple to fetch.";
               };
 
@@ -246,7 +256,7 @@
               }
               {
                 assertion = !cfg.prebuilt.enable || cfg.prebuilt.url != null || cfg.prebuilt.target != null;
-                message = "No qsh prebuilt target is known for ${pkgs.system}; set programs.qsh.prebuilt.target or programs.qsh.prebuilt.url.";
+                message = "No qsh prebuilt target is known for ${system}; set programs.qsh.prebuilt.target or programs.qsh.prebuilt.url.";
               }
             ];
 
