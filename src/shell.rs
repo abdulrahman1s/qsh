@@ -40,11 +40,30 @@ fn render_completion(shell: Shell) -> String {
     };
 
     // 3) Bind the synthetic completion to the `?` / `??` aliases.
-    // zsh: alias `?` resolves to `noglob qsh`; compdef ties _qshq to the alias name.
-    // bash: alias `?` runs `__qsh_pre_noglob; qsh`; completion keys off the first word.
-    // fish: `?` and `??` are functions; `--wraps qshq` delegates completion to qshq.
+    //
+    // zsh expands `?` / `??` to `noglob qsh ...` BEFORE completion fires
+    // (unless the user sets COMPLETE_ALIASES, which we don't want to force
+    // globally — it would break completion for all their other aliases).
+    // So `compdef _qshq '?'` never triggers. Workaround: replace the
+    // registered handler for `qsh` with a dispatcher that inspects the raw
+    // line editor buffer ($BUFFER, the actual typed text — not the expanded
+    // words) and routes to _qshq when the user typed `?` or `??`.
+    //
+    // bash and fish track the originally-typed command word natively, so
+    // direct registration on `?` / `??` is enough.
     let aliasing = match shell {
-        Shell::Zsh => "\ncompdef _qshq '?' '??'\n",
+        Shell::Zsh => concat!(
+            "\n",
+            "_qsh_dispatch() {\n",
+            "    local -a __qsh_tokens\n",
+            "    __qsh_tokens=(${(z)BUFFER})\n",
+            "    case \"${__qsh_tokens[1]}\" in\n",
+            "        '?'|'??') _qshq ;;\n",
+            "        *) _qsh ;;\n",
+            "    esac\n",
+            "}\n",
+            "compdef _qsh_dispatch qsh\n",
+        ),
         Shell::Bash => "\ncomplete -F _qshq -o nosort -o bashdefault -o default '?' '??'\n",
         Shell::Fish => "\ncomplete -c '?' --wraps qshq\ncomplete -c '??' --wraps qshq\n",
     };
@@ -285,11 +304,16 @@ mod tests {
     }
 
     #[test]
-    fn zsh_completion_registers_question_mark_aliases() {
+    fn zsh_completion_dispatches_question_mark_to_generate_completion() {
         let script = render_completion(Shell::Zsh);
         assert!(script.contains("_qsh()"));
         assert!(script.contains("_qshq()"));
-        assert!(script.contains("compdef _qshq '?' '??'"));
+        assert!(script.contains("_qsh_dispatch"));
+        // Must override the registered handler for qsh itself; this is what
+        // lets the dispatcher intercept alias-expanded `? <tab>`.
+        assert!(script.contains("compdef _qsh_dispatch qsh"));
+        // And must read the raw buffer (not $words, which is post-expansion).
+        assert!(script.contains("${(z)BUFFER}"));
     }
 
     #[test]
