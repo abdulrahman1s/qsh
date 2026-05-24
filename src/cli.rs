@@ -43,6 +43,7 @@ impl Shell {
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
+    /// Target shell to print the wrapper and completion script for.
     #[arg(value_enum)]
     pub shell: Shell,
 }
@@ -56,49 +57,56 @@ pub struct KnownArgs {
 
 #[derive(Args, Debug)]
 pub struct GenerateArgs {
-    /// Force shell wrapper integration mode (default: zsh).
+    /// Wrapper shell context (set by `qsh init`; affects exec/history semantics).
     #[arg(long, value_enum, default_value = "zsh")]
     pub shell: Shell,
 
-    // Provider flags
+    /// Use Google Gemini.
     #[arg(short = 'g', long = "gemini", visible_alias = "google")]
     pub gemini: bool,
+    /// Use OpenAI (GPT).
     #[arg(short = 'o', long = "openai", visible_alias = "gpt")]
     pub openai: bool,
+    /// Use Anthropic Claude.
     #[arg(short = 'c', long = "claude")]
     pub claude: bool,
+    /// Use a local Ollama model.
     #[arg(short = 'l', long = "ollama", visible_aliases = ["local"])]
     pub ollama: bool,
+    /// Provider name (gemini|openai|claude|ollama).
     #[arg(short = 'p', long = "provider")]
     pub provider: Option<String>,
 
-    // Model
+    /// Override the model id for the selected provider.
     #[arg(short = 'm', long = "model")]
     pub model: Option<String>,
 
-    // Mode
+    /// Use a smarter (slower, larger-budget) model.
     #[arg(short = 's', long = "smart")]
     pub smart: bool,
+    /// Force fast mode (cheap, low-latency).
     #[arg(short = 'f', long = "fast")]
     pub fast: bool,
 
-    // Cache
+    /// Skip the response cache for this run.
     #[arg(long = "no-cache")]
     pub no_cache: bool,
+    /// Delete the on-disk cache directory and exit.
     #[arg(long = "clear-cache")]
     pub clear_cache: bool,
 
-    // Context
+    /// Omit cwd context (git branch, lang manifests, build tools).
     #[arg(long = "no-context")]
     pub no_context: bool,
 
-    // Alternatives
+    /// Stream N (1-8) alternative candidates and pick one via fzf.
     #[arg(short = 'a', long = "alts")]
     pub alts: Option<u32>,
 
-    // Output controls
+    /// Print a one-line explanation alongside the command.
     #[arg(short = 'e', long = "explain")]
     pub explain: bool,
+    /// Dump resolved provider/model/request body to stderr.
     #[arg(short = 'd', long = "debug")]
     pub debug: bool,
 
