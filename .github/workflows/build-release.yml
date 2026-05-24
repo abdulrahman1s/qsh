@@ -123,6 +123,9 @@ jobs:
 
             # Conventional commits: feat: -> minor, fix:/perf: -> patch,
             # any "<type>!:" subject or "BREAKING CHANGE:" footer -> major.
+            breaking_re='^[A-Za-z]+(\([^)]+\))?!:'
+            feat_re='^feat(\([^)]+\))?:'
+            fix_re='^(fix|perf)(\([^)]+\))?:'
             commits="$(git log --format='%H%x1f%B%x1e' "${range}" || true)"
             if [[ -n "${commits}" ]]; then
               while IFS= read -r -d $'\x1e' entry; do
@@ -131,13 +134,13 @@ jobs:
                 subject="${subject%%$'\n'*}"
                 body="${entry#*$'\x1f'}"
 
-                if [[ "${subject}" =~ ^[A-Za-z]+(\([^)]+\))?!: ]] \
+                if [[ "${subject}" =~ $breaking_re ]] \
                    || grep -qE '^(BREAKING[ -]CHANGE):' <<<"${body}"; then
                   bump_kind="major"
                   break
-                elif [[ "${subject}" =~ ^feat(\([^)]+\))?: ]]; then
+                elif [[ "${subject}" =~ $feat_re ]]; then
                   [[ "${bump_kind}" != "major" ]] && bump_kind="minor"
-                elif [[ "${subject}" =~ ^(fix|perf)(\([^)]+\))?: ]]; then
+                elif [[ "${subject}" =~ $fix_re ]]; then
                   [[ -z "${bump_kind}" ]] && bump_kind="patch"
                 fi
               done <<<"${commits}"
