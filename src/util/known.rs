@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use crate::cache;
+use super::cache;
 
 const TTL: Duration = Duration::from_secs(60 * 60 * 24 * 7);
 

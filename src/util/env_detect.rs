@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 
-use crate::known;
+use super::known;
 
 #[derive(Debug, Clone)]
 pub struct EnvInfo {

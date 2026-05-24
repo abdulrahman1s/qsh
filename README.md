@@ -273,9 +273,56 @@ Always prefer ripgrep over grep, fd over find.
 
 Recognised keys are `provider`, `mode`, `model`. Everything after the `---` line is free-form text appended to the system prompt. Use it for project conventions that don't fit in language-manifest auto-detection.
 
-**Precedence**: CLI flag > `.qshrc` > env var (`QSH_PROVIDER`, `QSH_MODE`, `OPENAI_MODEL`, …) > built-in default.
+**Precedence**: CLI flag > `.qshrc` > **`~/.config/qsh/config.toml`** > env var (`QSH_PROVIDER`, `QSH_MODE`, `OPENAI_MODEL`, …) > built-in default.
 
 `.qshrc` is parsed, not sourced. A stray `$(rm -rf ~)` in there is treated as a literal string. Comments (`# …`) and blank lines are skipped.
+
+### Global config: `~/.config/qsh/config.toml` and `qsh config`
+
+Use the global config file when you want one place for your provider preferences, API keys, model overrides, retry knobs, and timeouts instead of scattering them across shell rc files. `.qshrc` still wins for per-project overrides, and env vars still work as a fallback (useful for CI).
+
+```sh
+# Initial setup — pipe secrets in so they don't land in your shell history.
+qsh config set provider claude
+qsh config set mode fast
+echo "$ANTHROPIC_API_KEY" | qsh config set providers.claude.api_key
+qsh config set providers.claude.model claude-sonnet-4-6
+
+# Tune behaviour
+qsh config set providers.openai.tokens.smart 32000   # bigger output budget for OpenAI smart mode
+qsh config set providers.claude.tokens.thinking_budget 8000
+qsh config set timeouts.smart_secs 240
+qsh config set retry.keep 5
+
+# Inspect what qsh will actually use (API keys redacted, sources annotated):
+qsh config show
+
+# Open in $EDITOR for free-form editing:
+qsh config edit
+```
+
+The first `qsh config set` or `qsh config edit` seeds the file with a fully-commented template at `~/.config/qsh/config.toml` (`$XDG_CONFIG_HOME/qsh/config.toml` if set), `chmod 0600`. Subsequent edits preserve your comments.
+
+**Settable keys**:
+
+| Key | Type | Default |
+| --- | --- | --- |
+| `provider` | `gemini` \| `openai` \| `claude` \| `ollama` | auto-detect |
+| `mode` | `fast` \| `smart` | `fast` |
+| `providers.<p>.api_key` | string (falls back to `<P>_API_KEY` env) | — |
+| `providers.<p>.model` | string (falls back to `<P>_MODEL` env, then built-in default) | — |
+| `providers.<p>.tokens.fast` | u32 max output tokens | 500 |
+| `providers.<p>.tokens.smart` | u32 max output tokens | 16000 (Claude: 10000) |
+| `providers.claude.tokens.thinking_budget` | u32 — Claude extended-thinking | 5000 |
+| `providers.ollama.base_url` | string (falls back to `OLLAMA_BASE_URL`/`OLLAMA_HOST`) | `http://127.0.0.1:11434` |
+| `retry.keep` | usize — failed attempts kept in replay history | 3 |
+| `retry.window_minutes` | u64 — drop attempts older than this | 10 |
+| `capture.stderr_bytes` | usize — bytes of stderr stored per failure | 4096 |
+| `timeouts.connect_secs` | u64 | 10 |
+| `timeouts.fast_secs` | u64 — total request timeout in fast mode | 60 |
+| `timeouts.smart_secs` | u64 — total request timeout in smart mode | 180 |
+
+For API-key keys, pipe the value via stdin (recommended) so it never lands in shell history; for non-secret keys, pass the value as the third arg.
 
 ### Multiple candidates: `--alts N`
 
@@ -686,9 +733,9 @@ Debug dump shows resolved provider/model/mode, system-prompt size, cache file, a
 ### Adding a provider
 
 1. Add a variant to `Provider` in `src/config.rs`.
-2. Extend `api_key_env`, `default_model`, `model_env`, `stream_filter_kind`, `Provider::parse`, and the match in `build` in `src/provider.rs`.
-3. Add a `StreamKind` variant and `extract_delta` branch.
-4. Cover with a `extract_*_delta` unit test.
+2. Add `src/providers/<name>.rs` with the provider's request builder, env/model constants, and stream delta extraction.
+3. Extend `api_key_env`, `default_model`, `model_env`, `stream_filter_kind`, `Provider::parse`, and the dispatch match in `src/providers/mod.rs`.
+4. Add a `StreamKind` variant and cover it with an `extract_*_delta` unit test.
 
 See `AGENTS.md` for the module-by-module layout.
 

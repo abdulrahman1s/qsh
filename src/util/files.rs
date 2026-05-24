@@ -1,5 +1,5 @@
+use super::xml_escape;
 use crate::config::FILE_CAP;
-use crate::xml_escape;
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};

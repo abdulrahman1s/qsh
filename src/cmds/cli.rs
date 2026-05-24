@@ -22,6 +22,36 @@ pub enum Command {
     Init(InitArgs),
     /// Manage the ~/.qsh_known list of detected tools.
     Known(KnownArgs),
+    /// Manage the global qsh config at ~/.config/qsh/config.toml.
+    Config(ConfigArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    pub action: ConfigAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ConfigAction {
+    /// Print the effective config (TOML + env + defaults), with API keys redacted.
+    Show,
+    /// Open the config file in $EDITOR (creates a template if missing).
+    Edit,
+    /// Set a config value (e.g. `qsh config set providers.claude.api_key sk-ant-...`).
+    Set(ConfigSetArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ConfigSetArgs {
+    /// Dotted key path. Allowed:
+    ///   provider, mode,
+    ///   providers.<gemini|openai|claude|ollama>.api_key,
+    ///   providers.<gemini|openai|claude|ollama>.model,
+    ///   providers.ollama.base_url
+    pub key: String,
+    /// New value. Omit and pipe via stdin for API keys.
+    pub value: Option<String>,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]

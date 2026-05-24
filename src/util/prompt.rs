@@ -1,12 +1,12 @@
-use crate::cli::Shell;
+use super::env_detect::EnvInfo;
+use crate::cmds::cli::Shell;
 use crate::config::Mode;
-use crate::env_detect::EnvInfo;
 
-const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("../prompts/system.txt");
-const RETRY_DIRECTIVE: &str = include_str!("../prompts/retry.txt");
-const REFINE_DIRECTIVE: &str = include_str!("../prompts/refine.txt");
-const EXPLAIN_DIRECTIVE: &str = include_str!("../prompts/explain.txt");
-const ALTS_DIRECTIVE_TEMPLATE: &str = include_str!("../prompts/alts.txt");
+const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("../../prompts/system.txt");
+const RETRY_DIRECTIVE: &str = include_str!("../../prompts/retry.txt");
+const REFINE_DIRECTIVE: &str = include_str!("../../prompts/refine.txt");
+const EXPLAIN_DIRECTIVE: &str = include_str!("../../prompts/explain.txt");
+const ALTS_DIRECTIVE_TEMPLATE: &str = include_str!("../../prompts/alts.txt");
 
 pub fn system_prompt(env: &EnvInfo, shell: Shell) -> String {
     SYSTEM_PROMPT_TEMPLATE
@@ -170,11 +170,17 @@ fn push_directive(out: &mut String, directive: &str) {
     out.push_str(directive.trim_end());
 }
 
-pub fn max_tokens(mode: Mode, explain: bool, alts: u32) -> u32 {
-    use crate::config::*;
+pub fn max_tokens(
+    mode: Mode,
+    explain: bool,
+    alts: u32,
+    provider: crate::config::Provider,
+    settings: &super::settings::Settings,
+) -> u32 {
+    use crate::config::{TOKENS_EXPLAIN_BONUS, TOKENS_PER_ALT};
     let mut t = match mode {
-        Mode::Smart => TOKENS_SMART,
-        Mode::Fast => TOKENS_FAST,
+        Mode::Smart => settings.tokens_smart(provider),
+        Mode::Fast => settings.tokens_fast(provider),
     };
     if explain {
         t += TOKENS_EXPLAIN_BONUS;
@@ -276,23 +282,61 @@ mod tests {
 
     #[test]
     fn tokens_fast_default() {
-        assert_eq!(max_tokens(Mode::Fast, false, 1), 500);
+        let s = crate::util::settings::Settings::default();
+        assert_eq!(
+            max_tokens(Mode::Fast, false, 1, crate::config::Provider::Claude, &s),
+            500
+        );
     }
 
     #[test]
     fn tokens_explain_bonus() {
-        assert_eq!(max_tokens(Mode::Fast, true, 1), 700);
+        let s = crate::util::settings::Settings::default();
+        assert_eq!(
+            max_tokens(Mode::Fast, true, 1, crate::config::Provider::Claude, &s),
+            700
+        );
     }
 
     #[test]
     fn tokens_alts_fast() {
-        // 500 + 4 * 800
-        assert_eq!(max_tokens(Mode::Fast, false, 4), 500 + 4 * 800);
+        let s = crate::util::settings::Settings::default();
+        assert_eq!(
+            max_tokens(Mode::Fast, false, 4, crate::config::Provider::Claude, &s),
+            500 + 4 * 800
+        );
     }
 
     #[test]
     fn tokens_smart_alts_no_bonus() {
         // Smart already has huge headroom; per-alt overhead skipped.
-        assert_eq!(max_tokens(Mode::Smart, false, 4), 16_000);
+        let s = crate::util::settings::Settings::default();
+        assert_eq!(
+            max_tokens(Mode::Smart, false, 4, crate::config::Provider::Claude, &s),
+            16_000
+        );
+    }
+
+    #[test]
+    fn tokens_override_from_settings() {
+        let src = r#"
+[providers.openai.tokens]
+fast = 1000
+smart = 30000
+"#;
+        let s: crate::util::settings::Settings = toml::from_str(src).unwrap();
+        assert_eq!(
+            max_tokens(Mode::Fast, false, 1, crate::config::Provider::Openai, &s),
+            1000
+        );
+        assert_eq!(
+            max_tokens(Mode::Smart, false, 1, crate::config::Provider::Openai, &s),
+            30000
+        );
+        // Other providers keep defaults.
+        assert_eq!(
+            max_tokens(Mode::Fast, false, 1, crate::config::Provider::Claude, &s),
+            500
+        );
     }
 }

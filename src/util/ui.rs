@@ -53,7 +53,7 @@ pub fn retry_indicator(s: &str) {
 /// just renders a spinner to stderr. Honors `cancelled`.
 pub async fn spinner_wait(
     buf: Arc<Mutex<String>>,
-    join: &mut tokio::task::JoinHandle<crate::stream::StreamResult>,
+    join: &mut tokio::task::JoinHandle<crate::providers::stream::StreamResult>,
     alts: u32,
     retry: bool,
     refine: bool,
@@ -129,7 +129,7 @@ fn count_sentinels(text: &str) -> usize {
 
 pub async fn typewriter(
     buf: Arc<Mutex<String>>,
-    join: &mut tokio::task::JoinHandle<crate::stream::StreamResult>,
+    join: &mut tokio::task::JoinHandle<crate::providers::stream::StreamResult>,
     cancelled: Arc<AtomicBool>,
     _cancel_rx: watch::Receiver<bool>,
 ) {

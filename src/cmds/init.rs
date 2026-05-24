@@ -1,8 +1,8 @@
-use crate::cli::{Cli, GenerateArgs, InitArgs, Shell};
+use super::cli::{Cli, GenerateArgs, InitArgs, Shell};
 use clap::{Args, CommandFactory};
 use clap_complete::{Shell as ClapShell, generate};
 
-pub fn init(args: InitArgs) -> i32 {
+pub fn run(args: InitArgs) -> i32 {
     let wrapper = match args.shell {
         Shell::Bash => BASH_INIT,
         Shell::Fish => FISH_INIT,
@@ -86,7 +86,7 @@ const ZSH_INIT: &str = r#"# qsh zsh integration. Source this from your zshrc:
 
 qsh() {
   case "$1" in
-    generate|record|init|known|-h|--help|-V|--version)
+    generate|record|init|known|config|-h|--help|-V|--version)
       command qsh "$@"
       return $?
       ;;
@@ -157,7 +157,7 @@ qsh() {
   __qsh_restore_glob
 
   case "$1" in
-    generate|record|init|known|-h|--help|-V|--version)
+    generate|record|init|known|config|-h|--help|-V|--version)
       command qsh "$@"
       return $?
       ;;
@@ -214,7 +214,7 @@ function qsh
     end
 
     switch "$subcmd"
-        case generate record init known -h --help -V --version
+        case generate record init known config -h --help -V --version
             command qsh $argv
             return $status
     end
@@ -278,7 +278,7 @@ end
 #[cfg(test)]
 mod tests {
     use super::{BASH_INIT, FISH_INIT, ZSH_INIT, render_completion};
-    use crate::cli::Shell;
+    use crate::cmds::cli::Shell;
 
     #[test]
     fn zsh_init_does_not_reference_bash_glob_restore_helper() {

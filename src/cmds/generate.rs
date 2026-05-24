@@ -1,18 +1,12 @@
-use crate::alts;
-use crate::cache;
-use crate::clean;
-use crate::cli::{GenerateArgs, Shell};
+use super::cli::{GenerateArgs, Shell};
 use crate::config::{ALTS_MAX, ALTS_MIN, INDICATOR_MAX, Mode, Provider, STDIN_CAP};
-use crate::context;
-use crate::env_detect;
-use crate::files;
-use crate::prompt;
-use crate::provider;
-use crate::qshrc;
-use crate::retry;
-use crate::stream;
-use crate::ui;
-use crate::xml_escape;
+use crate::providers as provider;
+use crate::providers::stream;
+use crate::util::{
+    alts, cache, clean, context, env_detect, files, prompt, qshrc, retry,
+    settings::{self, Settings},
+    ui, xml_escape,
+};
 use std::io::{IsTerminal, Read};
 use std::path::Path;
 use std::sync::Arc;
@@ -76,7 +70,13 @@ pub async fn run(args: GenerateArgs) -> i32 {
             alts: state.alts,
         });
         let sys = format!("{}{}", sys_base, directives);
-        let max_tok = prompt::max_tokens(state.mode, state.explain, state.alts);
+        let max_tok = prompt::max_tokens(
+            state.mode,
+            state.explain,
+            state.alts,
+            state.provider,
+            &state.settings,
+        );
 
         let stop: Vec<String> = if state.alts > 1 {
             Vec::new()
@@ -92,6 +92,7 @@ pub async fn run(args: GenerateArgs) -> i32 {
             mode: state.mode,
             max_tok,
             stop,
+            settings: &state.settings,
         });
 
         // Cache key + lookup.
@@ -147,7 +148,7 @@ pub async fn run(args: GenerateArgs) -> i32 {
             let (_cancel_tx, cancel_rx) = watch::channel(false);
             let cancelled = Arc::new(AtomicBool::new(false));
 
-            let mut handle = stream::start(req, state.mode, cancel_rx.clone());
+            let mut handle = stream::start(req, state.mode, cancel_rx.clone(), &state.settings);
             let buf = Arc::clone(&handle.buf);
 
             ui::spinner_wait(
@@ -299,6 +300,7 @@ struct State {
     cwd_context: String,
     retry: bool,
     refine: bool,
+    settings: Settings,
 }
 
 fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
@@ -311,6 +313,9 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         ));
         return Err(1);
     }
+
+    // Load global config early — needed for retry window + everything below.
+    let settings = settings::load();
 
     // Provider from explicit flag.
     let mut provider = if args.gemini {
@@ -392,7 +397,7 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
     if user_task.is_empty()
         && stdin_data.is_empty()
         && file_data.is_empty()
-        && retry::recent(cache_dir)
+        && retry::recent(cache_dir, &settings)
     {
         let attempts = retry::load_attempts(cache_dir);
         let last_task = retry::load_last_task(cache_dir).unwrap_or_default();
@@ -492,18 +497,18 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
 
     // Resolve provider, key, model.
     let env_pref = std::env::var("QSH_PROVIDER").ok();
-    let resolved = provider::resolve_provider(provider, env_pref, &mut model);
+    let resolved = provider::resolve_provider(provider, env_pref, &mut model, &settings);
     let Some(p) = resolved else {
         ui::die(
-            "no provider found. Set GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or use --ollama with -m MODEL.",
+            "no provider configured. Set one with `qsh config set provider <gemini|openai|claude|ollama>` then pipe an API key:\n  echo $KEY | qsh config set providers.<provider>.api_key\nOr export GEMINI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY in your shell, or use --ollama -m MODEL.",
         );
         return Err(1);
     };
-    if let Err(e) = provider::require_key(p) {
+    if let Err(e) = provider::require_key(p, &settings) {
         ui::die(&e);
         return Err(1);
     }
-    let model = match provider::resolve_model(p, model) {
+    let model = match provider::resolve_model(p, model, &settings) {
         Ok(m) => m,
         Err(e) => {
             ui::die(&e);
@@ -511,11 +516,17 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         }
     };
 
-    let mode = mode.unwrap_or_else(|| match std::env::var("QSH_MODE").as_deref() {
-        Ok("smart") => Mode::Smart,
-        Ok("fast") => Mode::Fast,
-        _ => Mode::Fast,
-    });
+    let mode = mode
+        .or(match settings.mode.as_deref() {
+            Some("smart") => Some(Mode::Smart),
+            Some("fast") => Some(Mode::Fast),
+            _ => None,
+        })
+        .unwrap_or_else(|| match std::env::var("QSH_MODE").as_deref() {
+            Ok("smart") => Mode::Smart,
+            Ok("fast") => Mode::Fast,
+            _ => Mode::Fast,
+        });
 
     let alts = args.alts.unwrap_or(1);
 
@@ -535,6 +546,7 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         cwd_context: String::new(),
         retry,
         refine: false,
+        settings,
     })
 }
 

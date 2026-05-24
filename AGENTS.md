@@ -9,8 +9,8 @@ interactive UI on stderr.
 
 - **Daily-driver shell tool.** zsh is the primary target; bash and Fish
   are also supported through generated wrappers.
-- **Single binary.** `qsh` has three subcommands: `generate`, `record`,
-  and `init`. There is no library surface.
+- **Single binary.** `qsh` has subcommands such as `generate`, `record`,
+  `init`, `known`, and `config`. There is no library surface.
 - **Shell wrapper holds eval/history.** `qsh generate` writes the
   accepted command to stdout; the wrapper printed by `qsh init zsh`,
   `qsh init bash`, or `qsh init fish` evaluates it in the user's current
@@ -26,24 +26,35 @@ Cargo.toml            crate metadata + dependencies
 prompts/              system prompt + mode directive text included at compile time
 src/
   main.rs             entrypoint, tokio runtime, subcommand dispatch
-  cli.rs              clap definitions (Cli/Command/{Generate,Record,Init}Args)
   config.rs           constants (token budgets, timeouts, caps) and shared enums
-  env_detect.rs       /etc/os-release, clipboard, pkg-manager detection
-  context.rs          cwd hints (git branch, lang manifests, build tools)
-  qshrc.rs            walk-up .qshrc parsing
-  prompt.rs           prompt file loading + placeholder substitution
-  provider.rs         Gemini/OpenAI/Claude/Ollama abstraction + body builders
-  stream.rs           reqwest streaming + SSE line parsing + error classification
-  files.rs            ./path file context (XML-escaped, 32K budget)
-  cache.rs            sha256 cache keys, atomic save
-  retry.rs            .last_attempts.jsonl history, 10-min window
-  alts.rs             sentinel-delimited multi-candidate parse + dedupe
-  clean.rs            strip fences, leading $/%, why-comment
-  ui.rs               spinner, typewriter, confirm prompt, fzf picker
-  shell.rs            init zsh/bash/fish wrapper scripts
-  record.rs           record subcommand (called by wrapper)
-  generate.rs         glue: parse -> context -> resolve -> loop -> print
-  xml_escape.rs       escape `& < > "` for embedding in <file>/<stdin> tags
+  cmds/               command-facing modules
+    cli.rs            clap definitions (Cli/Command/*Args)
+    config.rs         config subcommand implementation
+    generate.rs       glue: parse -> context -> resolve -> loop -> print
+    init.rs           init zsh/bash/fish wrapper scripts
+    known.rs          known subcommand implementation
+    record.rs         record subcommand (called by wrapper)
+  providers/          provider abstraction, request builders, stream parsing
+    mod.rs            shared provider dispatch + model/key resolution
+    gemini.rs         Gemini request body + SSE delta extraction
+    openai.rs         OpenAI request body + SSE delta extraction
+    claude.rs         Claude request body + SSE delta extraction
+    ollama.rs         Ollama URL/model helpers + stream delta extraction
+    stream.rs         reqwest streaming + SSE line parsing + error classification
+  util/               shared helpers
+    env_detect.rs     /etc/os-release, clipboard, pkg-manager detection
+    context.rs        cwd hints (git branch, lang manifests, build tools)
+    qshrc.rs          walk-up .qshrc parsing
+    prompt.rs         prompt file loading + placeholder substitution
+    files.rs          ./path file context (XML-escaped, 32K budget)
+    cache.rs          sha256 cache keys, atomic save
+    retry.rs          .last_attempts.jsonl history, 10-min window
+    alts.rs           sentinel-delimited multi-candidate parse + dedupe
+    clean.rs          strip fences, leading $/%, why-comment
+    settings.rs       global config loading + effective defaults
+    known.rs          known-program cache and categorization
+    ui.rs             spinner, typewriter, confirm prompt, fzf picker
+    xml_escape.rs     escape `& < > "` for embedding in <file>/<stdin> tags
 ```
 
 ## Invariants
@@ -97,11 +108,13 @@ target/release/qsh init fish | fish -n
 **Add a provider**
 
 1. Add a variant to `Provider` in `src/config.rs`.
-2. Extend `api_key_env`, `default_model`, `model_env`,
-   `stream_filter_kind`, `Provider::parse`, and the match in `build`
-   in `src/provider.rs`.
-3. Add a `StreamKind` variant and `extract_delta` branch.
-4. Cover with a `extract_*_delta` unit test.
+2. Add `src/providers/<name>.rs` with the provider's request builder,
+   env/model constants, and stream delta extraction.
+3. Extend `api_key_env`, `default_model`, `model_env`,
+   `stream_filter_kind`, `Provider::parse`, and the dispatch match in
+   `src/providers/mod.rs`.
+4. Add a `StreamKind` variant and cover it with an `extract_*_delta`
+   unit test.
 
 **Inspect what the model will see**
 

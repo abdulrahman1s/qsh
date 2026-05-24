@@ -1,4 +1,4 @@
-use crate::clean::clean_command;
+use super::clean::clean_command;
 
 pub struct ParsedAlts {
     pub candidates: Vec<String>,

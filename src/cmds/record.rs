@@ -1,6 +1,5 @@
-use crate::cache;
-use crate::cli::RecordArgs;
-use crate::retry;
+use super::cli::RecordArgs;
+use crate::util::{cache, retry, settings, ui};
 use std::path::Path;
 
 pub fn run(args: RecordArgs) -> i32 {
@@ -11,8 +10,9 @@ pub fn run(args: RecordArgs) -> i32 {
     } else {
         args.original_task
     };
-    if let Err(e) = retry::record(&dir, &args.cmd, stderr, args.status, &original) {
-        crate::ui::warn(&format!("record failed: {e}"));
+    let s = settings::load();
+    if let Err(e) = retry::record(&dir, &args.cmd, stderr, args.status, &original, &s) {
+        ui::warn(&format!("record failed: {e}"));
         return 1;
     }
     0

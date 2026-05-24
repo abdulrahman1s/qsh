@@ -1,5 +1,5 @@
-use crate::cache;
-use crate::config::{ATTEMPTS_KEEP, RETRY_WINDOW_MIN, STDERR_CAP};
+use super::cache;
+use super::settings::Settings;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,7 @@ pub fn last_task_file(cache_dir: &Path) -> PathBuf {
     cache_dir.join(".last_task")
 }
 
-pub fn recent(cache_dir: &Path) -> bool {
+pub fn recent(cache_dir: &Path, settings: &Settings) -> bool {
     let f = attempts_file(cache_dir);
     let Ok(meta) = fs::metadata(&f) else {
         return false;
@@ -30,7 +30,7 @@ pub fn recent(cache_dir: &Path) -> bool {
     let Ok(elapsed) = SystemTime::now().duration_since(mtime) else {
         return false;
     };
-    elapsed <= Duration::from_secs(RETRY_WINDOW_MIN * 60)
+    elapsed <= Duration::from_secs(settings.retry_window_min() * 60)
 }
 
 pub fn load_attempts(cache_dir: &Path) -> Vec<Attempt> {
@@ -70,13 +70,15 @@ pub fn record(
     stderr_file: Option<&Path>,
     rc: i32,
     original_task: &str,
+    settings: &Settings,
 ) -> std::io::Result<()> {
     fs::create_dir_all(cache_dir)?;
     if rc != 0 {
+        let stderr_cap = settings.stderr_cap();
         let stderr_text = stderr_file
             .and_then(|p| fs::read(p).ok())
             .map(|b| {
-                let start = b.len().saturating_sub(STDERR_CAP);
+                let start = b.len().saturating_sub(stderr_cap);
                 String::from_utf8_lossy(&b[start..]).to_string()
             })
             .unwrap_or_default();
@@ -84,8 +86,9 @@ pub fn record(
             cmd: cmd.to_string(),
             stderr: stderr_text,
         };
+        let keep_count = settings.retry_keep();
         let mut keep: Vec<Attempt> = load_attempts(cache_dir);
-        let want_drop = (keep.len() + 1).saturating_sub(ATTEMPTS_KEEP);
+        let want_drop = (keep.len() + 1).saturating_sub(keep_count);
         if want_drop > 0 {
             keep.drain(..want_drop);
         }
@@ -114,10 +117,11 @@ mod tests {
     #[test]
     fn record_failure_then_success_clears() {
         let dir = TempDir::new().unwrap();
-        record(dir.path(), "cmd1", None, 1, "intent").unwrap();
+        let s = Settings::default();
+        record(dir.path(), "cmd1", None, 1, "intent", &s).unwrap();
         assert!(attempts_file(dir.path()).exists());
         assert!(last_task_file(dir.path()).exists());
-        record(dir.path(), "cmd2", None, 0, "intent").unwrap();
+        record(dir.path(), "cmd2", None, 0, "intent", &s).unwrap();
         assert!(!attempts_file(dir.path()).exists());
         assert!(!last_task_file(dir.path()).exists());
     }
@@ -125,11 +129,25 @@ mod tests {
     #[test]
     fn record_trims_to_keep_window() {
         let dir = TempDir::new().unwrap();
+        let s = Settings::default();
         for i in 0..5 {
-            record(dir.path(), &format!("cmd{i}"), None, 1, "intent").unwrap();
+            record(dir.path(), &format!("cmd{i}"), None, 1, "intent", &s).unwrap();
         }
         let attempts = load_attempts(dir.path());
-        assert_eq!(attempts.len(), ATTEMPTS_KEEP);
+        assert_eq!(attempts.len(), crate::config::ATTEMPTS_KEEP);
+        assert_eq!(attempts.last().unwrap().cmd, "cmd4");
+    }
+
+    #[test]
+    fn record_respects_keep_override() {
+        let dir = TempDir::new().unwrap();
+        let src = "[retry]\nkeep = 2\n";
+        let s: Settings = toml::from_str(src).unwrap();
+        for i in 0..5 {
+            record(dir.path(), &format!("cmd{i}"), None, 1, "intent", &s).unwrap();
+        }
+        let attempts = load_attempts(dir.path());
+        assert_eq!(attempts.len(), 2);
         assert_eq!(attempts.last().unwrap().cmd, "cmd4");
     }
 }

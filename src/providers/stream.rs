@@ -1,7 +1,6 @@
-use crate::config::{
-    CURL_CONNECT_TIMEOUT_SECS, CURL_TIMEOUT_FAST_SECS, CURL_TIMEOUT_SMART_SECS, Mode,
-};
-use crate::provider::{PreparedRequest, StreamKind, extract_delta};
+use super::{PreparedRequest, StreamKind, extract_delta};
+use crate::config::Mode;
+use crate::util::settings::Settings;
 use futures_util::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -108,28 +107,41 @@ fn json_error_message(s: &str) -> Option<String> {
     None
 }
 
-pub fn start(req: PreparedRequest, mode: Mode, cancel_rx: watch::Receiver<bool>) -> StreamHandle {
+pub fn start(
+    req: PreparedRequest,
+    mode: Mode,
+    cancel_rx: watch::Receiver<bool>,
+    settings: &Settings,
+) -> StreamHandle {
     let buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let buf_clone = Arc::clone(&buf);
-    let join = tokio::spawn(async move { run(req, mode, buf_clone, cancel_rx).await });
+    let timeouts = StreamTimeouts {
+        connect: settings.timeout_connect(),
+        total: if mode == Mode::Smart {
+            settings.timeout_smart()
+        } else {
+            settings.timeout_fast()
+        },
+    };
+    let join = tokio::spawn(async move { run(req, timeouts, buf_clone, cancel_rx).await });
     StreamHandle { join, buf }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StreamTimeouts {
+    connect: u64,
+    total: u64,
 }
 
 async fn run(
     req: PreparedRequest,
-    mode: Mode,
+    timeouts: StreamTimeouts,
     buf: Arc<Mutex<String>>,
     mut cancel_rx: watch::Receiver<bool>,
 ) -> StreamResult {
-    let total = if mode == Mode::Smart {
-        CURL_TIMEOUT_SMART_SECS
-    } else {
-        CURL_TIMEOUT_FAST_SECS
-    };
-
     let client = match reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(CURL_CONNECT_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(total))
+        .connect_timeout(Duration::from_secs(timeouts.connect))
+        .timeout(Duration::from_secs(timeouts.total))
         .build()
     {
         Ok(c) => c,
@@ -169,7 +181,7 @@ async fn run(
     };
 
     let status = resp.status();
-    let kind = crate::provider::stream_filter_kind(req.provider);
+    let kind = super::stream_filter_kind(req.provider);
     let mut raw = String::new();
     let mut stream = resp.bytes_stream();
     let mut leftover = Vec::<u8>::new();
