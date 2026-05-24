@@ -216,10 +216,14 @@ jobs:
           set -euo pipefail
 
           git diff -- Cargo.toml Cargo.lock
-          git add Cargo.toml Cargo.lock
-          git commit -m "chore: release ${TAG}"
+          if [[ -n "$(git status --porcelain -- Cargo.toml Cargo.lock)" ]]; then
+            git add Cargo.toml Cargo.lock
+            git commit -m "chore: release ${TAG}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          else
+            echo "Cargo.toml already at ${TAG#v}; tagging existing HEAD."
+          fi
           git tag -a "${TAG}" -m "${TAG}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
           git push origin "${TAG}"
 
           echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
