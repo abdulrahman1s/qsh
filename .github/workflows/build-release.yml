@@ -249,15 +249,12 @@ jobs:
           rustup default stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ matrix.target }}-cargo-
+          key: ${{ matrix.target }}
+          shared-key: build
+          cache-on-failure: true
+          cache-all-crates: true
 
       - name: Check formatting
         run: cargo fmt --check
