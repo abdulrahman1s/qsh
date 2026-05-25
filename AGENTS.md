@@ -9,6 +9,9 @@ interactive UI on stderr.
 
 - **Daily-driver shell tool.** zsh is the primary target; bash and Fish
   are also supported through generated wrappers.
+- **Cross-platform command generation.** Keep Linux, FreeBSD, and macOS
+  working. Guard Linux-only assumptions, preserve Homebrew/macOS
+  clipboard support, and account for BSD-vs-GNU flag differences.
 - **Single binary.** `qsh` has subcommands such as `generate`, `record`,
   `init`, `known`, and `config`. There is no library surface.
 - **Shell wrapper holds eval/history.** `qsh generate` writes the
@@ -124,6 +127,21 @@ target/release/qsh generate -d -- ls files here 2>&1 | head -200
 
 Debug dump shows resolved provider/model/mode, system-prompt size,
 cache file, and the request body with redacted headers.
+
+**Git commits**
+
+Use the existing conventional-style subject format:
+
+```text
+feat(scope): short imperative summary
+fix: short imperative summary
+docs(scope): short imperative summary
+chore: short imperative summary
+chore: release vX.Y.Z
+```
+
+Keep the subject concise, lowercase the type, include a scope when it
+adds useful context, and match the release-commit format exactly.
 
 ## Don'ts
 
