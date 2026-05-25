@@ -39,12 +39,19 @@ pub(super) fn build(args: &BuildArgs<'_>) -> PreparedRequest {
 }
 
 pub(super) fn build_cli(args: &BuildArgs<'_>) -> PreparedCli {
+    let effort = if args.mode == Mode::Smart {
+        "high"
+    } else {
+        "low"
+    };
     PreparedCli {
         program: "claude".to_string(),
         args: vec![
             "-p".into(),
             "--model".into(),
             args.model.into(),
+            "--effort".into(),
+            effort.into(),
             "--output-format".into(),
             "stream-json".into(),
             "--include-partial-messages".into(),
@@ -75,4 +82,47 @@ pub(super) fn extract_delta(v: &Value) -> Option<String> {
     v.pointer("/delta/text")
         .and_then(|t| t.as_str())
         .map(String::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Backend, Mode, Provider};
+    use crate::util::settings::Settings;
+
+    fn args_for(mode: Mode) -> BuildArgs<'static> {
+        BuildArgs {
+            provider: Provider::Claude,
+            backend: Backend::Cli,
+            system: "sys",
+            task: "task",
+            model: "claude-sonnet-4-6",
+            mode,
+            max_tok: 1000,
+            stop: Vec::new(),
+            settings: Box::leak(Box::new(Settings::default())),
+        }
+    }
+
+    #[test]
+    fn cli_passes_low_effort_in_fast_mode() {
+        let cli = build_cli(&args_for(Mode::Fast));
+        let i = cli
+            .args
+            .iter()
+            .position(|a| a == "--effort")
+            .expect("--effort arg");
+        assert_eq!(cli.args[i + 1], "low");
+    }
+
+    #[test]
+    fn cli_passes_high_effort_in_smart_mode() {
+        let cli = build_cli(&args_for(Mode::Smart));
+        let i = cli
+            .args
+            .iter()
+            .position(|a| a == "--effort")
+            .expect("--effort arg");
+        assert_eq!(cli.args[i + 1], "high");
+    }
 }

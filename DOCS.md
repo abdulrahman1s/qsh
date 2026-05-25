@@ -174,7 +174,7 @@ codex login
 qsh config set providers.openai.backend cli
 ```
 
-For per-project overrides, add `backend = "cli"` to `qsh.toml`. The Claude CLI backend ignores `smart` token-budget settings because Claude Code exposes model choice but not the API's max-token or thinking-budget controls.
+For per-project overrides, add `backend = "cli"` to `qsh.toml`. The CLI backends translate mode → reasoning effort: `fast` passes `low` and `smart` passes `high` (via `claude --effort` and `codex -c model_reasoning_effort=...`). They still ignore the `tokens.smart` budget — those API knobs aren't exposed by the CLIs.
 
 ## Shell Integration
 

@@ -37,12 +37,19 @@ pub(super) fn build_cli(args: &BuildArgs<'_>) -> PreparedCli {
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| ".".into());
+    let effort = if args.mode == Mode::Smart {
+        "high"
+    } else {
+        "low"
+    };
     PreparedCli {
         program: "codex".into(),
         args: vec![
             "exec".into(),
             "-m".into(),
             args.model.into(),
+            "-c".into(),
+            format!("model_reasoning_effort={}", effort),
             "-C".into(),
             cwd,
             "--ephemeral".into(),
@@ -65,4 +72,39 @@ pub(super) fn extract_delta(v: &Value) -> Option<String> {
         return None;
     }
     v.get("delta").and_then(|d| d.as_str()).map(String::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Backend, Mode, Provider};
+    use crate::util::settings::Settings;
+
+    fn args_for(mode: Mode) -> BuildArgs<'static> {
+        BuildArgs {
+            provider: Provider::Openai,
+            backend: Backend::Cli,
+            system: "sys",
+            task: "task",
+            model: "gpt-5.4",
+            mode,
+            max_tok: 1000,
+            stop: Vec::new(),
+            settings: Box::leak(Box::new(Settings::default())),
+        }
+    }
+
+    #[test]
+    fn cli_passes_low_effort_in_fast_mode() {
+        let cli = build_cli(&args_for(Mode::Fast));
+        let i = cli.args.iter().position(|a| a == "-c").expect("-c arg");
+        assert_eq!(cli.args[i + 1], "model_reasoning_effort=low");
+    }
+
+    #[test]
+    fn cli_passes_high_effort_in_smart_mode() {
+        let cli = build_cli(&args_for(Mode::Smart));
+        let i = cli.args.iter().position(|a| a == "-c").expect("-c arg");
+        assert_eq!(cli.args[i + 1], "model_reasoning_effort=high");
+    }
 }
