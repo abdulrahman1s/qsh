@@ -122,7 +122,7 @@ pub async fn run(args: GenerateArgs) -> i32 {
         }
 
         if cached_hit {
-            ui::status_line_cached(state.provider.as_str(), &state.model, state.mode.as_str());
+            ui::status_line_cached(state.provider_label(), &state.model, state.mode.as_str());
             ui::print_command(&cmd);
             if state.debug {
                 debug_dump(&state, &sys, &req, &cache_file, true);
@@ -130,13 +130,13 @@ pub async fn run(args: GenerateArgs) -> i32 {
         } else {
             if state.alts > 1 && !state.retry && !state.refine {
                 ui::status_line_alts(
-                    state.provider.as_str(),
+                    state.provider_label(),
                     &state.model,
                     state.mode.as_str(),
                     state.alts,
                 );
             } else {
-                ui::status_line(state.provider.as_str(), &state.model, state.mode.as_str());
+                ui::status_line(state.provider_label(), &state.model, state.mode.as_str());
             }
 
             if state.debug {
@@ -304,6 +304,18 @@ struct State {
     retry: bool,
     refine: bool,
     settings: Settings,
+}
+
+impl State {
+    fn provider_label(&self) -> &'static str {
+        match (self.provider, self.backend) {
+            (Provider::Gemini, _) => "Gemini",
+            (Provider::Openai, Backend::Api) => "OpenAI",
+            (Provider::Openai, Backend::Cli) => "Codex",
+            (Provider::Claude, _) => "Claude",
+            (Provider::Ollama, _) => "Ollama",
+        }
+    }
 }
 
 fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
