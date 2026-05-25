@@ -14,742 +14,118 @@ Yet another natural-language shell tool. Here's the thing that makes this one st
 
 ## Features
 
-- **Four providers, one interface.** Gemini, OpenAI, Anthropic, and local Ollama are all supported. Auto-detects from API keys first, then a configured or installed Ollama model.
-- **Fast and smart modes.** `?` for low-reasoning, sub-second answers. `??` for extended-thinking on harder asks ("find what's listening on port 8080 and kill it").
-- **Confirm-before-run.** Every generated command is shown and requires `y` to execute. Default action on plain Enter is decline.
-- **Edit before run.** Press `e` at the prompt to tweak the command in place. Edits are persisted to cache so the next identical query returns your fix.
-- **Refine on demand.** Press `r` to re-prompt the model with a follow-up directive ("case-insensitive", "exclude node_modules", "do it with ripgrep instead") while preserving the original intent.
-- **Failure-aware retry.** If a command run through `?` fails, a bare `?` within 10 minutes replays the _original intent_ plus the last 3 failed attempts (each with their stderr) so the model can fix what broke without re-cycling through approaches it already tried.
-- **Stdin context.** Anything piped in is included as context. `git status | ? what should I do`, `cat err.log | ? why is this failing`.
-- **Project context auto-injection.** Probes the cwd for git branch, language manifests (`Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`, `deno.json`, `mix.exs`, etc.) and build tooling (`flake.nix`, `Makefile`, `justfile`, `Dockerfile`, `compose.yaml`, etc.) and tells the model. So "run the tests" picks the right runner; "format this" picks the right formatter.
-- **Cross-distro by default.** The system prompt auto-adjusts to your OS at runtime: package manager (`apt`, `dnf`, `pacman`, `apk`, `zypper`, `xbps`, `emerge`, `brew`, `pkg`, or NixOS-declarative), clipboard tool (Wayland / X11 / macOS / none), and BSD-vs-GNU userland flag conventions are all detected. Tested on Debian-, RHEL-, Arch-, Alpine-, openSUSE-, Void-, Gentoo-family Linuxes plus NixOS, FreeBSD, and macOS.
-- **Why-comments.** `-e/--explain` appends a `# why: …` shell comment so you actually learn what the flags do. Stripped from history and from re-edits so up-arrow gives a clean command.
-- **Local response cache.** Identical queries return instantly from `~/.cache/qsh/` instead of round-tripping the API. Cache key includes provider, model, mode, system prompt, and project context, so different stacks/branches cache separately.
-- **Live streaming with typewriter pacing.** Output streams as the model produces it, paced for visual consistency between fast and smart modes.
-- **Stderr is the UI surface.** Status, spinner, typewriter playback, confirm prompt, debug dumps, and errors go to stderr. Stdout is reserved for the final accepted command, so the wrapper can `eval` it cleanly.
-- **Hardened against API-key leaks.** Keys go in `Authorization`, `x-api-key`, or `x-goog-api-key` headers, never the URL or stdout. Debug output redacts them.
-- **Safety hard-stops.** The system prompt refuses unguarded `rm -rf /`, `dd` to system disks, fork bombs, pipe-to-shell from URLs, etc. It only refuses when the user _didn't_ explicitly name the path. `rm -rf /tmp/build` is fine; `rm -rf $X/` where `$X` may be empty isn't.
-
----
+- Natural-language shell commands through `?` and smarter `??` mode.
+- Confirmation before execution, with edit and refine actions at the prompt.
+- Failure-aware retry: a bare `?` after a failed generated command includes the recent stderr so the next candidate can fix the actual error.
+- Context-aware suggestions from the current project, piped stdin, and explicit `./file` references.
+- Distro-aware command generation that adapts to Linux, BSD, and macOS userlands.
+- `--alts` can return several distinct command candidates in one request when you want options.
+- `-e/--explain` adds a short `# why:` note for learning or quick review.
+- Local caching speeds up repeated queries and keeps edited commands as the remembered answer.
+- Hosted providers, local Ollama, and Claude/Codex CLI backends.
 
 ## Install
 
-<details>
-<summary><b>Click to expand install instructions</b></summary>
+Install the latest release to `~/.local/bin/qsh`:
 
-### Install script
-
-Download the latest prebuilt GitHub Release binary and install it to `~/.local/bin/qsh`:
-
-```bash
+```sh
 curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh
 ```
 
-The script detects the host release target, downloads `qsh-<version>-<target>.tar.gz`,
-and verifies the `.sha256` asset when a local SHA-256 tool is available. It is
-user-only by default and never uses `sudo`, `doas`, or root permissions.
+Add shell integration:
 
-You can also have it add shell integration:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh -s -- --zshrc
-curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh -s -- --bashrc
-curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh -s -- --fishrc
+```sh
+eval "$(qsh init zsh)"      # zsh
+eval "$(qsh init bash)"     # bash
+qsh init fish | source      # fish
 ```
 
-### From source
+For a permanent setup, put the matching line in your shell rc file.
 
-```bash
+Build from source:
+
+```sh
 git clone https://github.com/abdulrahman1s/qsh.git
 cd qsh
 cargo build --release
-mkdir -p ~/.local/bin
 install -m 0755 target/release/qsh ~/.local/bin/qsh
 ```
 
-Then add the wrapper for your shell:
+<details>
+<summary>NixOS users</summary>
 
-```zsh
-echo 'eval "$(qsh init zsh)"' >> ~/.zshrc
-exec zsh
-```
-
-```bash
-echo 'eval "$(qsh init bash)"' >> ~/.bashrc
-exec bash
-```
-
-```fish
-mkdir -p ~/.config/fish
-echo 'qsh init fish | source' >> ~/.config/fish/config.fish
-exec fish
-```
-
-New shells will have `qsh`, `?`, and `??` available.
-Fish installs `?` and `??` as functions.
-Quote glob patterns in Fish queries when you want the model to see them literally, such as `? find "*.rs"`.
-
-### Nix flakes
-
-From this checkout:
-
-```bash
-nix run .#qsh -- --help
-nix profile install .#qsh
-```
-
-In a NixOS flake, add this repo as an input and enable the module:
-
-```nix
-{
-  inputs.qsh.url = "github:abdulrahman1s/qsh";
-
-  outputs = { nixpkgs, qsh, ... }: {
-    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
-      modules = [
-        qsh.nixosModules.default
-        {
-          programs.qsh = {
-            enable = true;
-            enableZshIntegration = true;
-            # enableBashIntegration = true;
-            # enableFishIntegration = true;
-          };
-        }
-      ];
-    };
-  };
-}
-```
-
-By default the module builds from source. To install a GitHub Release binary instead, enable `prebuilt` and pin the release tarball hash:
-
-```nix
-programs.qsh = {
-  enable = true;
-  prebuilt = {
-    enable = true;
-    version = "0.2.0";
-    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-  };
-};
-```
-
-Get the hash with:
-
-```bash
-nix store prefetch-file --json \
-  https://github.com/abdulrahman1s/qsh/releases/download/v0.2.0/qsh-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
-```
-
-### Provider setup
-
-Set at least one hosted-provider API key or an Ollama model in your shell environment (`~/.zshrc`, `~/.zshenv`, `~/.bashrc`, `~/.config/fish/config.fish`, or your secrets file of choice):
+Use the flake instead of a manual install:
 
 ```sh
-export GEMINI_API_KEY="..."        # https://aistudio.google.com/apikey
-export ANTHROPIC_API_KEY="..."     # https://console.anthropic.com/settings/keys
-export OPENAI_API_KEY="..."        # https://platform.openai.com/api-keys
-export OLLAMA_MODEL="qwen3:8b"     # optional local provider default
+nix run github:abdulrahman1s/qsh#qsh -- --help
+nix profile install github:abdulrahman1s/qsh#qsh
 ```
 
-Auto-detect order is `gemini > claude > openai > ollama`. If multiple providers are available, pin your default explicitly with `export QSH_PROVIDER=claude`.
-In fish, use `set -gx NAME "..."` instead of `export NAME="..."`.
-
-Ollama uses `http://127.0.0.1:11434` by default. Override it with `OLLAMA_HOST` or `OLLAMA_BASE_URL`; either `host:port`, `http://host:port`, or a base ending in `/v1` works.
+For the NixOS module and prebuilt-release option, see [DOCS.md](DOCS.md#nix-flakes).
 
 </details>
 
----
+## Provider Setup
+
+Set at least one hosted-provider API key, a local Ollama model, or a logged-in CLI backend:
+
+```sh
+export GEMINI_API_KEY="..."
+export ANTHROPIC_API_KEY="..."
+export OPENAI_API_KEY="..."
+export OLLAMA_MODEL="qwen3:8b"
+```
+
+CLI backends:
+
+```sh
+claude /login
+qsh config set providers.claude.backend cli
+
+codex login
+qsh config set providers.openai.backend cli
+```
+
+Auto-detect order is `gemini > claude > openai > ollama > claude CLI > codex CLI`. Pin a provider with `QSH_PROVIDER`, or use `qsh config`.
 
 ## Usage
-
-### Basic
 
 ```sh
 ? find rust files modified this week
 ?? rebase my last 5 commits onto main and drop the wip ones
-? -c port-forward 8080 to my staging cluster
-? -o -m gpt-5.4 convert all png files in this dir to webp
-? -l -m qwen3:8b summarize disk usage here
-```
-
-`?` is fast mode; `??` is smart mode (extended thinking enabled). Smart mode is slower and pricier but handles harder asks ("design a one-liner that…", "build a pipeline that…") much better.
-
-### Stdin context
-
-Anything piped in is treated as labelled context for the model, useful for "what does this mean", "what should I do with this", or "what's wrong here" workflows.
-
-```sh
 git status | ? what should I do
-git diff --stat | ? what does this PR look like
-git log --oneline -20 | ? summarise what changed recently
-
-cat err.log | ? why is this failing
-cargo build 2>&1 | ? explain this rust error
-journalctl -u nginx -n 50 --no-pager | ? what's wrong with nginx
-
-ps aux --sort=-%mem | head -20 | ? which of these should I kill
-df -h | ? which mount is almost full
-docker ps -a | ? clean up the stopped containers
-kubectl get pods -A | ? which pod is unhealthy and why
-
-ls -la | ? rename these files to lowercase
-find . -name '*.log' | ? group these by directory and summarise sizes
-```
-
-Stdin is capped at **32 KB**. The first 32 KB of a long log is usually more diagnostic than the last (the start has the original error; the tail just repeats it). If you specifically need the tail, pipe through `tail` first:
-
-```sh
-tail -c 32k server.log | ? what's the last error here
-```
-
-You can combine stdin context with explicit intent. The model gets both:
-
-```sh
-git status | ? -e prepare a clean-up commit
-# → git add -A && git commit -m "chore: clean up" # why: -A stages new+modified+deleted in one shot
-```
-
-### File context: `./path/to/file`
-
-Any argument starting with `./` and pointing at a readable file is loaded inline as labelled context. Multiple such args are allowed; total budget is the first **32 KB** combined.
-
-```sh
 ? ./Cargo.toml bump tokio to the latest minor
-? ./config.yaml ./schema.json check these match
-? ./errors.log why is this failing
-```
-
-A `./token` that doesn't resolve to a file falls through as literal task text. Directories are ignored on purpose (you probably wanted a specific file).
-
-**Line slicing.** Append a colon-suffix to a file ref to send only part of the file:
-
-| Syntax               | What it sends                     |
-| -------------------- | --------------------------------- |
-| `./file.log:50`      | First 50 lines                    |
-| `./file.log:-50`     | Last 50 lines (like `tail -n 50`) |
-| `./file.log:120-180` | Lines 120 through 180 inclusive   |
-
-```sh
-? ./build.log:-100 why is this failing
-? ./schema.sql:1-40 ./schema.sql:-20 summarise the head and tail
-```
-
-Slices still count against the 32 KB total budget; if a slice would overflow it, the read is truncated and the info line says so. A path that happens to literally end in `:N` is read whole when it exists on disk, so the slice form only kicks in when the bare path doesn't resolve.
-
-File context plays nicely with stdin and `--explain`:
-
-```sh
-cat manifest.json | ? ./schema.json does the stdin match the schema
-? -e ./Dockerfile what does ARG vs ENV do here
-```
-
-### Per-project config: `.qshrc`
-
-Drop a `.qshrc` in any directory (or any ancestor of it) to set defaults that only apply when you're working in that tree. The closest one wins. Format is dead simple:
-
-```
-# .qshrc
-provider=claude
-mode=smart
-model=claude-sonnet-4-6
----
-This codebase uses Bun, not Node. Prefer `bun` over `npm`/`pnpm`.
-Tests run with `bun test`; build is `bun run build`.
-Always prefer ripgrep over grep, fd over find.
-```
-
-Recognised keys are `provider`, `mode`, `model`. Everything after the `---` line is free-form text appended to the system prompt. Use it for project conventions that don't fit in language-manifest auto-detection.
-
-**Precedence**: CLI flag > `.qshrc` > **`~/.config/qsh/config.toml`** > env var (`QSH_PROVIDER`, `QSH_MODE`, `OPENAI_MODEL`, …) > built-in default.
-
-`.qshrc` is parsed, not sourced. A stray `$(rm -rf ~)` in there is treated as a literal string. Comments (`# …`) and blank lines are skipped.
-
-### Global config: `~/.config/qsh/config.toml` and `qsh config`
-
-Use the global config file when you want one place for your provider preferences, API keys, model overrides, retry knobs, and timeouts instead of scattering them across shell rc files. `.qshrc` still wins for per-project overrides, and env vars still work as a fallback (useful for CI).
-
-```sh
-# Initial setup — pipe secrets in so they don't land in your shell history.
-qsh config set provider claude
-qsh config set mode fast
-echo "$ANTHROPIC_API_KEY" | qsh config set providers.claude.api_key
-qsh config set providers.claude.model claude-sonnet-4-6
-
-# Tune behaviour
-qsh config set providers.openai.tokens.smart 32000   # bigger output budget for OpenAI smart mode
-qsh config set providers.claude.tokens.thinking_budget 8000
-qsh config set timeouts.smart_secs 240
-qsh config set retry.keep 5
-
-# Inspect what qsh will actually use (API keys redacted, sources annotated):
-qsh config show
-
-# Open in $EDITOR for free-form editing:
-qsh config edit
-```
-
-The first `qsh config set` or `qsh config edit` seeds the file with a fully-commented template at `~/.config/qsh/config.toml` (`$XDG_CONFIG_HOME/qsh/config.toml` if set), `chmod 0600`. Subsequent edits preserve your comments.
-
-**Settable keys**:
-
-| Key                                       | Type                                                          | Default                  |
-| ----------------------------------------- | ------------------------------------------------------------- | ------------------------ |
-| `provider`                                | `gemini` \| `openai` \| `claude` \| `ollama`                  | auto-detect              |
-| `mode`                                    | `fast` \| `smart`                                             | `fast`                   |
-| `providers.<p>.api_key`                   | string (falls back to `<P>_API_KEY` env)                      | —                        |
-| `providers.<p>.model`                     | string (falls back to `<P>_MODEL` env, then built-in default) | —                        |
-| `providers.<p>.tokens.fast`               | u32 max output tokens                                         | 1000                     |
-| `providers.<p>.tokens.smart`              | u32 max output tokens                                         | 16000 (Claude: 10000)    |
-| `providers.claude.tokens.thinking_budget` | u32 — Claude extended-thinking                                | 5000                     |
-| `providers.ollama.base_url`               | string (falls back to `OLLAMA_BASE_URL`/`OLLAMA_HOST`)        | `http://127.0.0.1:11434` |
-| `retry.keep`                              | usize — failed attempts kept in replay history                | 3                        |
-| `retry.window_minutes`                    | u64 — drop attempts older than this                           | 10                       |
-| `capture.stderr_bytes`                    | usize — bytes of stderr stored per failure                    | 4096                     |
-| `timeouts.connect_secs`                   | u64                                                           | 10                       |
-| `timeouts.fast_secs`                      | u64 — total request timeout in fast mode                      | 60                       |
-| `timeouts.smart_secs`                     | u64 — total request timeout in smart mode                     | 180                      |
-
-For API-key keys, pipe the value via stdin (recommended) so it never lands in shell history; for non-secret keys, pass the value as the third arg.
-
-### Multiple candidates: `--alts N`
-
-When the right answer isn't obvious, ask the model for **N** distinct candidate commands in a _single_ request and pick from the lot via `fzf` (falls back to a numbered menu if `fzf` isn't installed):
-
-```sh
-? --alts 4 dedupe lines from this file keeping the most recent
-? -a 3 -c port-forward to staging
-```
-
-The system prompt instructs the model to emit candidates separated by literal sentinel lines (`=== alt 1 ===`, `=== alt 2 ===`, …) and qsh parses those out into selectable entries. Why one request instead of N parallel:
-
-- **Same cost as a single call for input tokens**, output scales with N.
-- **Works on every provider** including reasoning models that reject temperature variation.
-- **The model can deliberately diversify** ("give me three _different_ approaches") rather than producing near-identical samples at varied temperatures.
-
-After picking, the normal confirm prompt fires: `y` runs, `e` edits, `r` refines, `n` declines.
-
-`--alts` results are **not cached**. The whole point is exploration, so future identical queries should still get fresh alternatives. Pairs especially well with `??` smart mode for harder asks.
-
-If the model returns fewer or duplicate candidates than requested, qsh reports the shortfall before the picker so you know whether to retry, switch providers, or accept it:
-
-```
-$ ?? --alts 3 design a one-liner that finds the slowest-booting systemd services
-claude ▸ claude-sonnet-4-6 ▸ smart ▸ 3 alts
-⠹ generating alternatives… (3/3)
-
-alt >
-> systemd-analyze blame | head -10
-  systemd-analyze critical-chain --no-pager | head -20
-  systemctl list-units --type=service --state=running --no-pager -o json | jq -r '.[] | "\(.activeenter) \(.unit)"' | sort | head -10
-```
-
-### Refine: press `r` at the prompt
-
-When the candidate is close but not quite right, press `r` and type a follow-up directive. The model gets the original intent + the previous candidate + your refinement, and tries again.
-
-```
-$ ? find duplicate files
-gemini ▸ gemini-3.5-flash ▸ fast
-find . -type f -exec md5sum {} + | sort | uniq -d -w 32
-
-Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] r
-refine: case-insensitive paths
-gemini ▸ gemini-3.5-flash ▸ fast
-find . -type f -exec md5sum {} + | sort -f | uniq -d -w 32
-
-Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] r
-refine: also exclude .git directory
-gemini ▸ gemini-3.5-flash ▸ fast
-find . -path ./.git -prune -o -type f -exec md5sum {} + | sort -f | uniq -d -w 32
-
-Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] y
-```
-
-Refines stack. Each `r` carries the prior candidate forward, so iterating "case-insensitive → exclude .git → also exclude node_modules" is natural.
-
-Refines are not cached. Each one costs an API round-trip. If you want to commit a tweak permanently for future identical queries, use `e` instead. The edited command is saved to cache.
-
-<details>
-<summary>More refine examples</summary>
-
-```
-$ ? show ports in use
-sudo ss -tulpn
-[r] refine: only IPv6 → sudo ss -tulpn -6
-[r] refine: skip ssh → sudo ss -tulpn -6 | grep -v ':22 '
-
-$ ? compress this directory
-tar -czf out.tar.gz .
-[r] refine: use zstd, max compression → tar --zstd -cf out.tar.zst -I 'zstd -19' .
-[r] refine: exclude node_modules and .git → tar --zstd -cf out.tar.zst --exclude='./node_modules' --exclude='./.git' -I 'zstd -19' .
-
-$ ? convert all png to webp
-for f in *.png; do cwebp "$f" -o "${f%.png}.webp"; done
-[r] refine: lossless and quality 100 → for f in *.png; do cwebp -lossless -q 100 "$f" -o "${f%.png}.webp"; done
-[r] refine: do it in parallel → find . -maxdepth 1 -name '*.png' -print0 | xargs -0 -P "$(nproc)" -I{} cwebp -lossless -q 100 {} -o {}.webp
-```
-
-</details>
-
-### Retry after failure: just press `?` again
-
-When a command generated or edited through `?` fails, a bare `?` within 10 minutes replays the _original intent_ plus the last 3 attempts (each with their stderr) so the model can fix what actually broke instead of restarting from scratch.
-
-```
-$ ? extract this archive
-gemini ▸ gemini-3.5-flash ▸ fast
-tar -xzf archive.tar.bz2
-Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] y
-gzip: stdin: not in gzip format
-tar: Child returned status 1
-tar: Error is not recoverable: exiting now
-
-$ ?
-retrying: extract this archive
-gemini ▸ gemini-3.5-flash ▸ fast
-tar -xjf archive.tar.bz2
-
-Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] y
-```
-
-The retry buffer holds up to 3 attempts before pruning. After a successful run, the buffer is cleared. After 10 minutes of no failures, it auto-expires, so an old broken command from earlier in the day doesn't pollute a fresh `?`.
-
-<details>
-<summary>More retry examples</summary>
-
-```
-$ ? install ripgrep
-sudo apt install ripgrep
-[run] → E: Could not open lock file /var/lib/dpkg/lock-frontend - open (13: Permission denied)
-$ ?
-retrying: install ripgrep
-sudo apt-get update && sudo apt-get install -y ripgrep
-
-$ ? find python files modified this week, replace 'foo' with 'bar'
-find . -name '*.py' -mtime -7 -exec sed -i 's/foo/bar/g'
-[run] → find: missing argument to `-exec'
-$ ?
-retrying: find python files modified this week, replace 'foo' with 'bar'
-find . -name '*.py' -mtime -7 -exec sed -i 's/foo/bar/g' {} +
-
-$ ? port-forward redis to localhost
-kubectl port-forward svc/redis 6379:6379
-[run] → error: services "redis" not found
-$ ?
-retrying: port-forward redis to localhost
-kubectl port-forward -n cache svc/redis-master 6379:6379
-# (the model picks a different namespace + service name based on the error)
-```
-
-</details>
-
-If retries are heading the wrong direction, type a normal `?` query to start over. The failure buffer is rebuilt from whatever attempt sequence comes next.
-
-### Edit before running: press `e`
-
-Drops you into an inline editor on the candidate command. Tweak a path, swap a flag, then Enter to run. **Edits are persisted to cache**, so next time you ask the same question, you get your edit, not the model's original.
-
-```
-$ ? show top memory hogs
-ps aux --sort=-%mem | head -10
-Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] e
-ps aux --sort=-%mem | head -20    ← your edit here
-```
-
-### Explain mode
-
-`-e` adds a one-line `# why:` comment explaining what the flags do. The comment is stripped before the command is pushed to history, so up-arrow gives a clean version.
-
-```sh
 ? -e show all open ports with the owning process
-# → sudo ss -tulpn # why: -t tcp, -u udp, -l listen-only, -p process, -n numeric
-
-? -e find files modified in the last week
-# → find . -type f -mtime -7 # why: -mtime takes days; negative means newer-than
-
-? -e copy current branch name to clipboard
-# → git rev-parse --abbrev-ref HEAD | tr -d '\n' | wl-copy # why: tr -d strips trailing newline so paste is clean
+? --alts 4 dedupe lines from this file keeping the most recent
 ```
 
-### Provider selection
+Prompt actions:
 
-```sh
-? -g find rust files                          # Gemini
-? -c port-forward 8080 to staging              # Claude
-? -o convert these png to webp                 # OpenAI
-? -l -m qwen3:8b summarize disk usage          # Local Ollama
-? -m claude-opus-4-1 -c plan a migration       # Override model
-? -p openai -m gpt-5.4-pro design a pipeline   # Long-form provider flag
-```
+| Key | Action |
+| --- | ------ |
+| `y` | Run the command |
+| `n` | Decline |
+| `e` | Edit before running |
+| `r` | Refine with a follow-up instruction |
+| `?` | Show prompt help |
 
-Auto-detect order is `gemini > claude > openai > ollama`. Ollama is selected when `OLLAMA_MODEL` is set or when `ollama list` returns an installed model. Pin a default with `export QSH_PROVIDER=claude` in your shell rc.
+## Documentation
 
-### The confirm prompt
+See [DOCS.md](DOCS.md) for installation variants, shell behavior, configuration, provider details, context handling, retries, caching, privacy/security notes, and development workflows.
 
-```
-Run?  [Y]es  [N]o  [E]dit  [R]efine  [?]
-```
+## Security and Privacy
 
-Each hotkey letter is colored: **Y** green (run), **N** bold red (decline, default), **E** blue (edit), **R** yellow (refine), **?** dim (help). The rest of each word is dimmed so the actionable letter pops.
+`qsh` is a command generator, not a permission boundary. Every command is shown before execution, and pressing Enter declines by default. Read the command before pressing `y`.
 
-| Key | Action                                     |
-| --- | ------------------------------------------ |
-| `y` | Run the command                            |
-| `n` | Decline (default; plain Enter also works)  |
-| `e` | Edit the command before running            |
-| `r` | Refine: rewrite with a follow-up directive |
-| `?` | Show this help inline, then re-prompt      |
+Prompts, piped stdin, and file context are sent to the provider or backend you select. Use local Ollama when you want requests to stay on your configured local endpoint, and avoid piping secrets to hosted providers or CLI backends.
 
-<details>
-<summary><b>Flags & environment variables</b></summary>
-
-### Flags
-
-```
-Provider:
-  -g, --gemini          Google Gemini      (env: GEMINI_API_KEY)
-  -o, --openai          OpenAI             (env: OPENAI_API_KEY)
-  -c, --claude          Anthropic Claude   (env: ANTHROPIC_API_KEY)
-  -l, --local, --ollama Local Ollama        (env: OLLAMA_MODEL, no API key)
-  -p, --provider PROV   One of gemini/openai/claude/ollama; aliases accepted
-
-Mode:
-  -s, --smart           Reasoning/thinking enabled, slower and more accurate
-  -f, --fast            Minimal reasoning, fast and cheap (default)
-
-Cache:
-  --no-cache            Skip the cache for this call (no read, no write)
-  QSH_NO_CACHE=1        Skip the cache for every call in this environment
-  --clear-cache         Wipe ~/.cache/qsh and exit
-
-Context:
-  --no-context          Skip cwd-aware project-context injection
-  QSH_NO_CONTEXT=1      Skip cwd-aware context for every call in this environment
-  ./<path>              Include a file as labelled context (32 KB cap)
-                          Slice: ./path:N first N lines, ./path:-N last N, ./path:A-B inclusive range
-  .qshrc                Per-project defaults; see below
-
-Alternatives:
-  -a, --alts N          Ask the model for N (1-8) candidates in one request, pick via fzf
-  QSH_ALTS=N            Use N alternatives by default
-
-Other:
-  -m, --model MODEL     Override the model name for the chosen provider
-  -e, --explain         Append a `# why: …` comment explaining the command
-  QSH_EXPLAIN=1         Append explanations by default
-  -d, --debug           Print request body and raw response to stderr
-  QSH_DEBUG=1           Enable debug dumps by default
-  -h, --help            Show help
-```
-
-### Environment variables
-
-| Variable          | Meaning                                                          |
-| ----------------- | ---------------------------------------------------------------- |
-| `QSH_PROVIDER`    | Default provider (`gemini`, `claude`, `openai`, `ollama`)        |
-| `QSH_MODE`        | Default mode (`fast`, `smart`)                                   |
-| `QSH_NO_CACHE`    | Disable response-cache reads/writes when set to a truthy value   |
-| `QSH_NO_CONTEXT`  | Disable cwd project-context injection when set to a truthy value |
-| `QSH_EXPLAIN`     | Append explanations by default when set to a truthy value        |
-| `QSH_DEBUG`       | Enable debug dumps by default when set to a truthy value         |
-| `QSH_ALTS`        | Default number of alternatives for `--alts`                      |
-| `GEMINI_MODEL`    | Override Gemini model (default `gemini-3.5-flash`)               |
-| `OPENAI_MODEL`    | Override OpenAI model (default `gpt-5.4-mini`)                   |
-| `ANTHROPIC_MODEL` | Override Claude model (default `claude-sonnet-4-6`)              |
-| `OLLAMA_MODEL`    | Override/select local Ollama model                               |
-| `OLLAMA_HOST`     | Override Ollama host, default `http://127.0.0.1:11434`           |
-| `OLLAMA_BASE_URL` | Override full Ollama/OpenAI-compatible base URL                  |
-| `XDG_CACHE_HOME`  | Cache root (defaults to `~/.cache`)                              |
-
-</details>
-
----
-
-## Safety
-
-The system prompt enforces hard-stop refusals for unambiguously dangerous patterns: recursive deletion of system roots, whole-disk writes (`dd`, `mkfs`, `wipefs`) to unnamed devices, fork bombs, pipe-to-shell from arbitrary URLs, mass `chmod 777`, disabling firewalls, etc. The model emits `echo 'REFUSED: <reason>'` instead of the literal command in those cases.
-
-The carveout: if you **explicitly name** a specific path or device, such as `rm -rf /tmp/build` or `wipe my USB at /dev/sdc`, it's generated normally. You took responsibility by naming it.
-
-This is a defense-in-depth layer, not a guarantee. **You** see every command before it runs and **you** press y. Read what's on the line.
-
----
-
-## Privacy
-
-- Prompts, stdin context, and file context are sent to whichever provider you selected. Don't pipe secrets you don't want logged by your provider's API endpoint; local Ollama stays on the configured local endpoint.
-- API keys are passed via HTTP headers, never URLs. Debug output redacts them.
-- Stdin input is capped at 32 KB (head, not tail; the start of a log/diff is more diagnostic than the end).
-- Debug mode (`-d`) prints the full request body and raw response to stderr. It does not print provider headers, but the request body includes your prompt plus any stdin/file context.
-
----
-
-## Requirements
-
-<details>
-<summary><b>Click to expand</b></summary>
-
-- **zsh** 5.x+, **bash** 4+, or **fish** 3.x+ for the shell wrapper.
-- An **API key** for at least one hosted provider, or a local **Ollama** model.
-
-Optional but used by the tool or some generated commands: `fzf` (alternative picker), `ollama` (local provider auto-detect), `wl-copy`/`wl-paste` (Wayland clipboard), `gh` (GitHub CLI), `ffmpeg`, `yt-dlp`. The model is told what's available; missing tools just mean the model picks an alternative.
-
-</details>
-
----
-
-## How it works
-
-<details>
-<summary><b>Click to expand</b></summary>
-
-1. **Parse** flags and stdin into a task description.
-2. **Probe** the cwd for git branch, language manifests, and build tooling. Wrap as `<cwd>git main | lang rust | tools nix</cwd>` and prepend to the task.
-3. **Look up** a sha256 cache key over `(provider, model, mode, system prompt, task)`. If hit, skip to step 6.
-4. **Stream** the request to the chosen provider's endpoint. Hosted providers use their native streaming APIs; Ollama uses its OpenAI-compatible `/v1/chat/completions` endpoint. Show a spinner until the first delta lands; then typewrite the response.
-5. **Strip** stray markdown fences, save the cleaned command to cache.
-6. **Confirm** with `y/n/e/r`. On `e`, drop into the inline editor. On `r`, rebuild the task with the original intent + previous candidate + refinement directive, loop back to step 3.
-7. **Run** via `eval` in the user's current shell with stderr captured to a tempfile. On failure, the wrapper calls `qsh record`, which writes a JSONL entry to `.last_attempts.jsonl` (capped at 3 entries, last 4KB of stderr each) so a subsequent bare `?` can replay the failure as context.
-
-```text
-user types:  ? list big files
-    |
-    v
-qsh generate -- list big files
-    stderr: spinner, status, command, confirm prompt
-    stdout: accepted command only
-    |
-    v
-shell wrapper:
-    history-add the command
-    eval it in the current shell
-    capture stderr
-    qsh record --status ...
-```
-
-</details>
-
----
-
-## Cross-platform support
-
-<details>
-<summary><b>Click to expand</b></summary>
-
-The system prompt **auto-adjusts** to your environment at runtime. On every call, it probes:
-
-- **OS**: reads `/etc/os-release` on Linux for `ID`, `ID_LIKE`, `PRETTY_NAME`; checks `$OSTYPE` for macOS and the BSDs.
-- **Package manager**: picks the right install command (`apt`, `dnf`, `pacman`, `apk`, `zypper`, `xbps`, `emerge`, `brew`, `pkg`) based on detected distro. NixOS gets a "don't suggest install steps; the system is declarative" rule. Unknown distros fall back to "pick guaranteed-available POSIX tools, don't guess at install commands".
-- **Clipboard**: Wayland (`wl-copy`/`wl-paste`) if `$WAYLAND_DISPLAY` is set and the tools are installed, X11 (`xclip` or `xsel`) if `$DISPLAY` is set, macOS pasteboard (`pbcopy`/`pbpaste`) on Darwin, otherwise nothing. The model is told to skip clipboard commands when none is available.
-
-**Detected families:**
-
-| Family        | Package manager       | Examples                                             |
-| ------------- | --------------------- | ---------------------------------------------------- |
-| NixOS         | (declarative)         | NixOS                                                |
-| Debian        | `apt`                 | Ubuntu, Debian, Mint, Pop!\_OS, Kali, Raspbian       |
-| Fedora / RHEL | `dnf`                 | Fedora, RHEL, CentOS, Rocky, AlmaLinux, Amazon Linux |
-| Arch          | `pacman`              | Arch, Manjaro, EndeavourOS, Garuda, Artix, CachyOS   |
-| Alpine        | `apk`                 | Alpine                                               |
-| openSUSE      | `zypper`              | openSUSE, SLES                                       |
-| Void          | `xbps-install`        | Void                                                 |
-| Gentoo        | `emerge`              | Gentoo                                               |
-| macOS         | `brew` (if installed) | macOS                                                |
-| BSD           | `pkg`                 | FreeBSD, OpenBSD, NetBSD, DragonFly                  |
-
-To verify what the model sees on your machine:
-
-```sh
-qsh generate -d -- ls 2>&1 | head -40
-```
-
-Debug dump shows resolved provider/model/mode, system-prompt size, cache file, and the request body with redacted headers.
-
-</details>
-
----
-
-## Caching
-
-<details>
-<summary><b>Click to expand</b></summary>
-
-Responses are cached in `${XDG_CACHE_HOME:-~/.cache}/qsh/` keyed by sha256 of `(provider, model, mode, system_prompt, task_with_context)`. Identical queries return instantly. Edits made via the `e` key overwrite the cached entry, so your manual fix wins next time.
-
-To bypass for a single call: `? --no-cache <query>`.
-To bypass for an environment/session: `QSH_NO_CACHE=1 ? <query>`.
-To wipe everything: `? --clear-cache`.
-
-</details>
-
----
-
-## Build
-
-<details>
-<summary><b>Click to expand build instructions</b></summary>
-
-```bash
-cargo check                             # type-check
-cargo test                              # run unit tests
-cargo clippy -- -D warnings             # warnings-as-errors lint
-cargo fmt --check                       # format gate
-cargo build --release                   # optimized binary
-```
-
-On NixOS where the C linker is not on `PATH`:
-
-```bash
-nix-shell -p gcc --run 'cargo build --release'
-```
-
-### Smoke-test the wrapper
-
-```bash
-target/release/qsh init zsh
-eval "$(target/release/qsh init zsh)"
-? find rust files modified today
-
-target/release/qsh init bash
-eval "$(qsh init bash)"
-
-target/release/qsh init fish
-```
-
-```fish
-qsh init fish | source
-```
-
-### Inspect what the model will see
-
-```bash
-target/release/qsh generate -d -- ls files here 2>&1 | head -200
-```
-
-Debug dump shows resolved provider/model/mode, system-prompt size, cache file, and the request body with redacted headers.
-
-### Adding a provider
-
-1. Add a variant to `Provider` in `src/config.rs`.
-2. Add `src/providers/<name>.rs` with the provider's request builder, env/model constants, and stream delta extraction.
-3. Extend `api_key_env`, `default_model`, `model_env`, `stream_filter_kind`, `Provider::parse`, and the dispatch match in `src/providers/mod.rs`.
-4. Add a `StreamKind` variant and cover it with an `extract_*_delta` unit test.
-
-See `AGENTS.md` for the module-by-module layout.
-
-</details>
-
----
+API keys are sent in provider headers, not URLs or stdout. Debug output redacts keys, but it can still include your prompt and any stdin/file context.
 
 ## Disclaimer
 
-This tool generates and runs shell commands produced by a language model. Models hallucinate. Models misread context. The safety hard-stops and the confirm prompt are defense-in-depth, not a guarantee. Anything you press `y` on runs with your shell's full privileges.
+This tool generates and runs shell commands produced by a language model. Models hallucinate, misread context, and can produce dangerous commands. The safety hard-stops and confirmation prompt are defense in depth, not a guarantee.
 
-**I am not responsible if you fuck your PC up with this tool.** Read the command on the line. If you don't understand it, don't run it. Use at your own risk.
-
----
+Anything you press `y` on runs with your shell's full privileges. Read the command on the line. If you do not understand it, do not run it. Use at your own risk.
 
 ## License
 
