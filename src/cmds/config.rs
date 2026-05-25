@@ -31,21 +31,21 @@ const TEMPLATE: &str = r#"# qsh config
 # api_key = "..."
 # model   = "gemini-3.5-flash"
 # [providers.gemini.tokens]
-# fast  = 500                  # max output tokens in fast mode
+# fast  = 1000                 # max output tokens in fast mode
 # smart = 16000                # max output tokens in smart mode
 
 # [providers.openai]
 # api_key = "..."
 # model   = "gpt-5.4-mini"
 # [providers.openai.tokens]
-# fast  = 500
+# fast  = 1000
 # smart = 16000
 
 # [providers.claude]
 # api_key = "..."
 # model   = "claude-sonnet-4-6"
 # [providers.claude.tokens]
-# fast            = 500
+# fast            = 1000
 # smart           = 10000      # Claude's smart-mode max_tokens
 # thinking_budget = 5000       # Claude-only: extended-thinking budget
 
@@ -53,7 +53,7 @@ const TEMPLATE: &str = r#"# qsh config
 # model    = "llama3"
 # base_url = "http://127.0.0.1:11434"
 # [providers.ollama.tokens]
-# fast  = 500
+# fast  = 1000
 # smart = 16000
 
 # ─── retry replay ──────────────────────────────────────────────────────────

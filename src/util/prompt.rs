@@ -285,7 +285,7 @@ mod tests {
         let s = crate::util::settings::Settings::default();
         assert_eq!(
             max_tokens(Mode::Fast, false, 1, crate::config::Provider::Claude, &s),
-            500
+            crate::config::TOKENS_FAST
         );
     }
 
@@ -294,7 +294,7 @@ mod tests {
         let s = crate::util::settings::Settings::default();
         assert_eq!(
             max_tokens(Mode::Fast, true, 1, crate::config::Provider::Claude, &s),
-            700
+            crate::config::TOKENS_FAST + crate::config::TOKENS_EXPLAIN_BONUS
         );
     }
 
@@ -303,7 +303,7 @@ mod tests {
         let s = crate::util::settings::Settings::default();
         assert_eq!(
             max_tokens(Mode::Fast, false, 4, crate::config::Provider::Claude, &s),
-            500 + 4 * 800
+            crate::config::TOKENS_FAST + 4 * crate::config::TOKENS_PER_ALT
         );
     }
 
@@ -336,7 +336,7 @@ smart = 30000
         // Other providers keep defaults.
         assert_eq!(
             max_tokens(Mode::Fast, false, 1, crate::config::Provider::Claude, &s),
-            500
+            crate::config::TOKENS_FAST
         );
     }
 }

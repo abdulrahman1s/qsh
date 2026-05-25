@@ -311,7 +311,7 @@ The first `qsh config set` or `qsh config edit` seeds the file with a fully-comm
 | `mode` | `fast` \| `smart` | `fast` |
 | `providers.<p>.api_key` | string (falls back to `<P>_API_KEY` env) | — |
 | `providers.<p>.model` | string (falls back to `<P>_MODEL` env, then built-in default) | — |
-| `providers.<p>.tokens.fast` | u32 max output tokens | 500 |
+| `providers.<p>.tokens.fast` | u32 max output tokens | 1000 |
 | `providers.<p>.tokens.smart` | u32 max output tokens | 16000 (Claude: 10000) |
 | `providers.claude.tokens.thinking_budget` | u32 — Claude extended-thinking | 5000 |
 | `providers.ollama.base_url` | string (falls back to `OLLAMA_BASE_URL`/`OLLAMA_HOST`) | `http://127.0.0.1:11434` |
