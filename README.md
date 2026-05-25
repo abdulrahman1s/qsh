@@ -10,6 +10,17 @@ Yet another natural-language shell tool. Here's the one thing that makes this on
 
 ---
 
+## What's actually in here
+
+- **Failure-aware retries.** Bare `?` after a failed run replays intent plus stderr so the next candidate fixes the real error.
+- **Edit-as-answer caching.** Tweak a command at the prompt and that edit becomes the remembered answer next time.
+- **Single-request alternatives.** `--alts N` returns N distinct candidates in one round-trip — no re-prompting.
+- **Distro-aware generation.** Detects your userland (Linux, BSD, macOS) so flag dialects match what you actually have.
+- **`-e/--explain`.** Adds a short `# why:` note when you want to learn, not just run.
+- **Project-aware context.** Pulls signals from cwd, piped stdin, and explicit `./file` references.
+- **Safety hard-stops.** Refuses `rm -rf /` but lets `rm -rf /tmp/build` through — naming the target is taking responsibility.
+- **Bring your own brain.** Hosted providers, local Ollama, and Claude/Codex CLI backends.
+
 ## Examples
 
 ### Fix on the fly
@@ -74,19 +85,6 @@ ss -tulpn  # why: TCP+UDP listening sockets with PID/program    [y/n/e/r]
 $ ?? find every file changed in the last 3 commits that still has a TODO
 git diff --name-only HEAD~3 HEAD | xargs grep -l TODO    [y/n/e/r]
 ```
-
----
-
-## What's actually in here
-
-- **Failure-aware retries.** Bare `?` after a failed run replays intent plus stderr so the next candidate fixes the real error.
-- **Edit-as-answer caching.** Tweak a command at the prompt and that edit becomes the remembered answer next time.
-- **Single-request alternatives.** `--alts N` returns N distinct candidates in one round-trip — no re-prompting.
-- **Distro-aware generation.** Detects your userland (Linux, BSD, macOS) so flag dialects match what you actually have.
-- **`-e/--explain`.** Adds a short `# why:` note when you want to learn, not just run.
-- **Project-aware context.** Pulls signals from cwd, piped stdin, and explicit `./file` references.
-- **Safety hard-stops.** Refuses `rm -rf /` but lets `rm -rf /tmp/build` through — naming the target is taking responsibility.
-- **Bring your own brain.** Hosted providers, local Ollama, and Claude/Codex CLI backends.
 
 ## Install
 
