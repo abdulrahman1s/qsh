@@ -1,21 +1,10 @@
 # Qsh ⚡
 
-*qsh = "question shell." `?` was already the universal symbol for "I don't know. Figure it out." Now it actually does.*
+_qsh = "question shell." `?` was already the universal symbol for "I don't know. Figure it out." Now it actually does._
 
 Yet another natural-language shell tool. Here's the thing that makes this one stick:
 
-```
-$ ? extract this archive
-tar -xzf archive.tar.bz2
-Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] y
-gzip: stdin: not in gzip format
-tar: Error is not recoverable: exiting now
-
-$ ?
-retrying: extract this archive
-tar -xjf archive.tar.bz2
-Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] y
-```
+![qsh demo](demo.gif)
 
 🔁 A bare `?` within 10 minutes of a failed command replays the original intent plus the last 3 attempts and their stderr. The model fixes what actually broke instead of re-cycling through approaches it already tried. None of the other AI-shell tools I tried did this. It's the difference between a screenshot demo and something you reach for daily.
 
@@ -26,7 +15,7 @@ Run?  [Y]es  [N]o  [E]dit  [R]efine  [?] y
 ## Features
 
 - **Four providers, one interface.** Gemini, OpenAI, Anthropic, and local Ollama are all supported. Auto-detects from API keys first, then a configured or installed Ollama model.
-- **Fast and smart modes.** `?` for low-reasoning, sub-second answers. `??` for extended-thinking on harder asks ("design a one-liner to dedupe by hash and keep newest").
+- **Fast and smart modes.** `?` for low-reasoning, sub-second answers. `??` for extended-thinking on harder asks ("find what's listening on port 8080 and kill it").
 - **Confirm-before-run.** Every generated command is shown and requires `y` to execute. Default action on plain Enter is decline.
 - **Edit before run.** Press `e` at the prompt to tweak the command in place. Edits are persisted to cache so the next identical query returns your fix.
 - **Refine on demand.** Press `r` to re-prompt the model with a follow-up directive ("case-insensitive", "exclude node_modules", "do it with ripgrep instead") while preserving the original intent.
@@ -179,7 +168,7 @@ Ollama uses `http://127.0.0.1:11434` by default. Override it with `OLLAMA_HOST` 
 
 ```sh
 ? find rust files modified this week
-?? design a one-liner to dedupe lines by hash, keep newest
+?? rebase my last 5 commits onto main and drop the wip ones
 ? -c port-forward 8080 to my staging cluster
 ? -o -m gpt-5.4 convert all png files in this dir to webp
 ? -l -m qwen3:8b summarize disk usage here
@@ -305,22 +294,22 @@ The first `qsh config set` or `qsh config edit` seeds the file with a fully-comm
 
 **Settable keys**:
 
-| Key | Type | Default |
-| --- | --- | --- |
-| `provider` | `gemini` \| `openai` \| `claude` \| `ollama` | auto-detect |
-| `mode` | `fast` \| `smart` | `fast` |
-| `providers.<p>.api_key` | string (falls back to `<P>_API_KEY` env) | — |
-| `providers.<p>.model` | string (falls back to `<P>_MODEL` env, then built-in default) | — |
-| `providers.<p>.tokens.fast` | u32 max output tokens | 1000 |
-| `providers.<p>.tokens.smart` | u32 max output tokens | 16000 (Claude: 10000) |
-| `providers.claude.tokens.thinking_budget` | u32 — Claude extended-thinking | 5000 |
-| `providers.ollama.base_url` | string (falls back to `OLLAMA_BASE_URL`/`OLLAMA_HOST`) | `http://127.0.0.1:11434` |
-| `retry.keep` | usize — failed attempts kept in replay history | 3 |
-| `retry.window_minutes` | u64 — drop attempts older than this | 10 |
-| `capture.stderr_bytes` | usize — bytes of stderr stored per failure | 4096 |
-| `timeouts.connect_secs` | u64 | 10 |
-| `timeouts.fast_secs` | u64 — total request timeout in fast mode | 60 |
-| `timeouts.smart_secs` | u64 — total request timeout in smart mode | 180 |
+| Key                                       | Type                                                          | Default                  |
+| ----------------------------------------- | ------------------------------------------------------------- | ------------------------ |
+| `provider`                                | `gemini` \| `openai` \| `claude` \| `ollama`                  | auto-detect              |
+| `mode`                                    | `fast` \| `smart`                                             | `fast`                   |
+| `providers.<p>.api_key`                   | string (falls back to `<P>_API_KEY` env)                      | —                        |
+| `providers.<p>.model`                     | string (falls back to `<P>_MODEL` env, then built-in default) | —                        |
+| `providers.<p>.tokens.fast`               | u32 max output tokens                                         | 1000                     |
+| `providers.<p>.tokens.smart`              | u32 max output tokens                                         | 16000 (Claude: 10000)    |
+| `providers.claude.tokens.thinking_budget` | u32 — Claude extended-thinking                                | 5000                     |
+| `providers.ollama.base_url`               | string (falls back to `OLLAMA_BASE_URL`/`OLLAMA_HOST`)        | `http://127.0.0.1:11434` |
+| `retry.keep`                              | usize — failed attempts kept in replay history                | 3                        |
+| `retry.window_minutes`                    | u64 — drop attempts older than this                           | 10                       |
+| `capture.stderr_bytes`                    | usize — bytes of stderr stored per failure                    | 4096                     |
+| `timeouts.connect_secs`                   | u64                                                           | 10                       |
+| `timeouts.fast_secs`                      | u64 — total request timeout in fast mode                      | 60                       |
+| `timeouts.smart_secs`                     | u64 — total request timeout in smart mode                     | 180                      |
 
 For API-key keys, pipe the value via stdin (recommended) so it never lands in shell history; for non-secret keys, pass the value as the third arg.
 
@@ -508,7 +497,7 @@ Each hotkey letter is colored: **Y** green (run), **N** bold red (decline, defau
 | Key | Action                                     |
 | --- | ------------------------------------------ |
 | `y` | Run the command                            |
-| `n` | Decline (default; plain Enter also works) |
+| `n` | Decline (default; plain Enter also works)  |
 | `e` | Edit the command before running            |
 | `r` | Refine: rewrite with a follow-up directive |
 | `?` | Show this help inline, then re-prompt      |
@@ -557,22 +546,22 @@ Other:
 
 ### Environment variables
 
-| Variable          | Meaning                                                   |
-| ----------------- | --------------------------------------------------------- |
-| `QSH_PROVIDER`    | Default provider (`gemini`, `claude`, `openai`, `ollama`) |
-| `QSH_MODE`        | Default mode (`fast`, `smart`)                            |
-| `QSH_NO_CACHE`    | Disable response-cache reads/writes when set to a truthy value |
+| Variable          | Meaning                                                          |
+| ----------------- | ---------------------------------------------------------------- |
+| `QSH_PROVIDER`    | Default provider (`gemini`, `claude`, `openai`, `ollama`)        |
+| `QSH_MODE`        | Default mode (`fast`, `smart`)                                   |
+| `QSH_NO_CACHE`    | Disable response-cache reads/writes when set to a truthy value   |
 | `QSH_NO_CONTEXT`  | Disable cwd project-context injection when set to a truthy value |
-| `QSH_EXPLAIN`     | Append explanations by default when set to a truthy value |
-| `QSH_DEBUG`       | Enable debug dumps by default when set to a truthy value |
-| `QSH_ALTS`        | Default number of alternatives for `--alts` |
-| `GEMINI_MODEL`    | Override Gemini model (default `gemini-3.5-flash`)        |
-| `OPENAI_MODEL`    | Override OpenAI model (default `gpt-5.4-mini`)            |
-| `ANTHROPIC_MODEL` | Override Claude model (default `claude-sonnet-4-6`)       |
-| `OLLAMA_MODEL`    | Override/select local Ollama model                        |
-| `OLLAMA_HOST`     | Override Ollama host, default `http://127.0.0.1:11434`    |
-| `OLLAMA_BASE_URL` | Override full Ollama/OpenAI-compatible base URL           |
-| `XDG_CACHE_HOME`  | Cache root (defaults to `~/.cache`)                       |
+| `QSH_EXPLAIN`     | Append explanations by default when set to a truthy value        |
+| `QSH_DEBUG`       | Enable debug dumps by default when set to a truthy value         |
+| `QSH_ALTS`        | Default number of alternatives for `--alts`                      |
+| `GEMINI_MODEL`    | Override Gemini model (default `gemini-3.5-flash`)               |
+| `OPENAI_MODEL`    | Override OpenAI model (default `gpt-5.4-mini`)                   |
+| `ANTHROPIC_MODEL` | Override Claude model (default `claude-sonnet-4-6`)              |
+| `OLLAMA_MODEL`    | Override/select local Ollama model                               |
+| `OLLAMA_HOST`     | Override Ollama host, default `http://127.0.0.1:11434`           |
+| `OLLAMA_BASE_URL` | Override full Ollama/OpenAI-compatible base URL                  |
+| `XDG_CACHE_HOME`  | Cache root (defaults to `~/.cache`)                              |
 
 </details>
 
