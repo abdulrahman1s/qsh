@@ -86,6 +86,7 @@ In a NixOS flake, add this repo as an input and enable the module:
 ```nix
 {
   inputs.qsh.url = "github:abdulrahman1s/qsh";
+  inputs.qsh.inputs.nixpkgs.follows = "nixpkgs";
 
   outputs = { nixpkgs, qsh, ... }: {
     nixosConfigurations.host = nixpkgs.lib.nixosSystem {
