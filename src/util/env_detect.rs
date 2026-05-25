@@ -53,7 +53,7 @@ fn read_os_release() -> (String, String, String) {
 }
 
 fn linux_pkg_rule(id_chain: &str) -> &'static str {
-    let c = id_chain;
+    let c = id_chain.to_lowercase();
     if c.contains("nixos") {
         "This is NixOS — never suggest apt, brew, dnf, pacman, or pip-install steps. NixOS is declarative; if a tool may be missing, use a guaranteed alternative."
     } else if c.contains("ubuntu")
