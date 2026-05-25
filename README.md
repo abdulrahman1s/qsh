@@ -532,21 +532,26 @@ Mode:
 
 Cache:
   --no-cache            Skip the cache for this call (no read, no write)
+  QSH_NO_CACHE=1        Skip the cache for every call in this environment
   --clear-cache         Wipe ~/.cache/qsh and exit
 
 Context:
   --no-context          Skip cwd-aware project-context injection
+  QSH_NO_CONTEXT=1      Skip cwd-aware context for every call in this environment
   ./<path>              Include a file as labelled context (32 KB cap)
                           Slice: ./path:N first N lines, ./path:-N last N, ./path:A-B inclusive range
   .qshrc                Per-project defaults; see below
 
 Alternatives:
   -a, --alts N          Ask the model for N (1-8) candidates in one request, pick via fzf
+  QSH_ALTS=N            Use N alternatives by default
 
 Other:
   -m, --model MODEL     Override the model name for the chosen provider
   -e, --explain         Append a `# why: …` comment explaining the command
+  QSH_EXPLAIN=1         Append explanations by default
   -d, --debug           Print request body and raw response to stderr
+  QSH_DEBUG=1           Enable debug dumps by default
   -h, --help            Show help
 ```
 
@@ -556,6 +561,11 @@ Other:
 | ----------------- | --------------------------------------------------------- |
 | `QSH_PROVIDER`    | Default provider (`gemini`, `claude`, `openai`, `ollama`) |
 | `QSH_MODE`        | Default mode (`fast`, `smart`)                            |
+| `QSH_NO_CACHE`    | Disable response-cache reads/writes when set to a truthy value |
+| `QSH_NO_CONTEXT`  | Disable cwd project-context injection when set to a truthy value |
+| `QSH_EXPLAIN`     | Append explanations by default when set to a truthy value |
+| `QSH_DEBUG`       | Enable debug dumps by default when set to a truthy value |
+| `QSH_ALTS`        | Default number of alternatives for `--alts` |
 | `GEMINI_MODEL`    | Override Gemini model (default `gemini-3.5-flash`)        |
 | `OPENAI_MODEL`    | Override OpenAI model (default `gpt-5.4-mini`)            |
 | `ANTHROPIC_MODEL` | Override Claude model (default `claude-sonnet-4-6`)       |
@@ -680,6 +690,7 @@ Debug dump shows resolved provider/model/mode, system-prompt size, cache file, a
 Responses are cached in `${XDG_CACHE_HOME:-~/.cache}/qsh/` keyed by sha256 of `(provider, model, mode, system_prompt, task_with_context)`. Identical queries return instantly. Edits made via the `e` key overwrite the cached entry, so your manual fix wins next time.
 
 To bypass for a single call: `? --no-cache <query>`.
+To bypass for an environment/session: `QSH_NO_CACHE=1 ? <query>`.
 To wipe everything: `? --clear-cache`.
 
 </details>

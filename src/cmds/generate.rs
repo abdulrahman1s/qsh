@@ -362,7 +362,7 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         }
         task_words.push(arg.clone());
     }
-    let user_task = task_words.join(" ");
+    let user_task = task_words.join(" ").trim().to_string();
 
     // Stdin (if piped).
     let mut stdin_data = String::new();
@@ -372,6 +372,10 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         if h.read_to_end(&mut buf).is_ok() {
             stdin_data = String::from_utf8_lossy(&buf).to_string();
         }
+    }
+    // Treat whitespace-only stdin as no stdin so the empty-input guard fires.
+    if stdin_data.trim().is_empty() {
+        stdin_data.clear();
     }
 
     // Read files for context.
@@ -674,16 +678,19 @@ Mode flags (default: fast; override with $QSH_MODE):
 
 Cache:
   --no-cache            Skip the cache for this call (no read, no write)
+  QSH_NO_CACHE=1        Skip the cache for every call in this environment
   --clear-cache         Wipe ~/.cache/qsh and exit
 
 Context:
   --no-context          Skip cwd-aware context (git branch, language manifests, build/test tooling)
+  QSH_NO_CONTEXT=1      Skip cwd-aware context for every call in this environment
   ./<path>              Include the file at <path> as labelled context (first 32KB per file)
                           Slice: ./path:N first N lines, ./path:-N last N, ./path:A-B inclusive range
   .qshrc                Per-project defaults — searched up from cwd.
 
 Alternatives:
   -a, --alts N          Ask the model for N (1-8) distinct candidate commands, pick via fzf
+  QSH_ALTS=N            Use N alternatives by default
 
 Retry & refine:
   ?                     Bare `?` within 10 min of a failed command retries with original intent
@@ -696,7 +703,9 @@ Other:
   --shell SHELL        Wrapper shell context: zsh, bash, or fish (default: zsh)
   -m, --model MODEL     Override the model name for the chosen provider
   -e, --explain         Append a `# why: …` shell comment explaining the command
+  QSH_EXPLAIN=1         Append explanations by default
   -d, --debug           Print context, request JSON, and raw response to stderr
+  QSH_DEBUG=1           Enable debug dumps by default
   -h, --help            Show this help
 
 Auto-detect order: gemini > claude > openai > ollama.

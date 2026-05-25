@@ -118,26 +118,44 @@ pub struct GenerateArgs {
     #[arg(short = 'f', long = "fast")]
     pub fast: bool,
 
-    /// Skip the response cache for this run.
-    #[arg(long = "no-cache")]
+    /// Skip the response cache for this run (or set QSH_NO_CACHE=1).
+    #[arg(
+        long = "no-cache",
+        env = "QSH_NO_CACHE",
+        value_parser = clap::builder::FalseyValueParser::new()
+    )]
     pub no_cache: bool,
     /// Delete the on-disk cache directory and exit.
     #[arg(long = "clear-cache")]
     pub clear_cache: bool,
 
     /// Omit cwd context (git branch, lang manifests, build tools).
-    #[arg(long = "no-context")]
+    #[arg(
+        long = "no-context",
+        env = "QSH_NO_CONTEXT",
+        value_parser = clap::builder::FalseyValueParser::new()
+    )]
     pub no_context: bool,
 
     /// Stream N (1-8) alternative candidates and pick one via fzf.
-    #[arg(short = 'a', long = "alts")]
+    #[arg(short = 'a', long = "alts", env = "QSH_ALTS")]
     pub alts: Option<u32>,
 
     /// Print a one-line explanation alongside the command.
-    #[arg(short = 'e', long = "explain")]
+    #[arg(
+        short = 'e',
+        long = "explain",
+        env = "QSH_EXPLAIN",
+        value_parser = clap::builder::FalseyValueParser::new()
+    )]
     pub explain: bool,
     /// Dump resolved provider/model/request body to stderr.
-    #[arg(short = 'd', long = "debug")]
+    #[arg(
+        short = 'd',
+        long = "debug",
+        env = "QSH_DEBUG",
+        value_parser = clap::builder::FalseyValueParser::new()
+    )]
     pub debug: bool,
 
     /// Print full long-form help.
