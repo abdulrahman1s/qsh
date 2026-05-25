@@ -28,13 +28,32 @@ curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh
 
 The script detects the host release target, downloads `qsh-<version>-<target>.tar.gz`, and verifies the `.sha256` asset when a local SHA-256 tool is available. It is user-only by default and does not use `sudo`, `doas`, or root permissions.
 
-You can also have it add shell integration:
+After install, the script detects your shell from `$SHELL` and asks via `/dev/tty` (so it still works under `curl … | sh`):
+
+```text
+==> add qsh shell integration to /home/you/.zshrc? [Y/n]
+```
+
+Pressing Enter accepts the default and appends the `qsh init` line plus a `PATH` export if needed. The append is idempotent — re-running the installer won't duplicate entries.
+
+If `/dev/tty` is unavailable (CI, non-interactive shell), the rc file is left alone and the installer prints a hint instead. Pass `--yes` to make it append automatically in that case.
+
+Skip the prompt with explicit flags:
 
 ```sh
+# auto-accept the prompt
+curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh -s -- --yes
+
+# never touch any rc file
+curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh -s -- --no-modify-rc
+
+# pick a specific shell instead of auto-detecting
 curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh -s -- --zshrc
 curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh -s -- --bashrc
 curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/qsh/master/install.sh | sh -s -- --fishrc
 ```
+
+`QSH_YES=1` and `QSH_NO_MODIFY_RC=1` work as environment-variable equivalents of `--yes` and `--no-modify-rc`.
 
 ### From source
 

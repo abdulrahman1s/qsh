@@ -20,6 +20,9 @@ EMIT_INIT=0
 EDIT_ZSHRC=0
 EDIT_BASHRC=0
 EDIT_FISHRC=0
+ASSUME_YES=${QSH_YES:-0}
+SKIP_RC=${QSH_NO_MODIFY_RC:-0}
+SHELL_SETUP_DONE=0
 TMP_DIR=
 QSH_SRC=
 
@@ -38,12 +41,18 @@ Options:
   --bin-dir DIR      Install directly into DIR
   --user             Install under $HOME/.local (the default)
   --shell SHELL      Shell for --emit-init: zsh, bash, or fish
-  --zshrc            Append qsh integration to ~/.zshrc
-  --bashrc           Append qsh integration to ~/.bashrc
-  --fishrc           Append qsh integration to ~/.config/fish/config.fish
+  --zshrc            Append qsh integration to ~/.zshrc (skips the prompt)
+  --bashrc           Append qsh integration to ~/.bashrc (skips the prompt)
+  --fishrc           Append qsh integration to ~/.config/fish/config.fish (skips the prompt)
+  -y, --yes          Auto-accept the shell-integration prompt
+  --no-modify-rc     Never modify a shell rc file; don't prompt
   --emit-init        Print init code to stdout after install
   --uninstall        Remove the installed qsh binary from the selected prefix
   -h, --help         Show this help
+
+By default the installer detects your shell ($SHELL) and asks before
+appending the qsh init line to the matching rc file. Use --yes for
+non-interactive installs or --no-modify-rc to opt out entirely.
 
 Environment:
   QSH_VERSION        Same as --version
@@ -52,7 +61,9 @@ Environment:
   QSH_ARCHIVE_URL    Same as --archive-url
   PREFIX             Same as --prefix; defaults to $HOME/.local
   BIN_DIR            Same as --bin-dir; defaults to $PREFIX/bin
-  QSH_SHELL          Default shell for --emit-init
+  QSH_SHELL          Default shell for the prompt and --emit-init
+  QSH_YES            Same as --yes
+  QSH_NO_MODIFY_RC   Same as --no-modify-rc
 EOF
 }
 
@@ -321,6 +332,96 @@ append_integration_once() {
   append_once "$rc_file" "$marker" "$line" "$label"
 }
 
+prompt_yes_no() {
+  question=$1
+  default=$2
+
+  case "$default" in
+    y) suffix=" [Y/n] " ;;
+    *) suffix=" [y/N] " ;;
+  esac
+
+  answer=
+  printf '%s%s==>%s %s%s' "$BOLD" "$CYAN" "$RESET" "$question" "$suffix" > /dev/tty
+  if ! IFS= read -r answer < /dev/tty; then
+    printf '\n' > /dev/tty
+    return 1
+  fi
+
+  case "$answer" in
+    [Yy]|[Yy][Ee][Ss]) return 0 ;;
+    [Nn]|[Nn][Oo]) return 1 ;;
+    '')
+      case "$default" in y) return 0 ;; *) return 1 ;; esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+setup_shell_rc() {
+  shell=$1
+  [ -n "${HOME:-}" ] || die "shell integration setup needs HOME to be set"
+
+  case "$shell" in
+    zsh)
+      append_path_once "$HOME/.zshrc" '# qsh PATH' "export PATH=\"$BIN_DIR:\$PATH\"" "zsh PATH"
+      append_integration_once "$HOME/.zshrc" zsh '# qsh zsh integration' "eval \"\$($QSH_BIN init zsh)\"" zsh
+      hint "restart your shell or run: exec zsh"
+      ;;
+    bash)
+      append_path_once "$HOME/.bashrc" '# qsh PATH' "export PATH=\"$BIN_DIR:\$PATH\"" "bash PATH"
+      append_integration_once "$HOME/.bashrc" bash '# qsh bash integration' "eval \"\$($QSH_BIN init bash)\"" bash
+      hint "restart your shell or run: exec bash"
+      ;;
+    fish)
+      append_path_once "$HOME/.config/fish/config.fish" '# qsh PATH' "fish_add_path $BIN_DIR" "fish PATH"
+      append_integration_once "$HOME/.config/fish/config.fish" fish '# qsh fish integration' "$QSH_BIN init fish | source" fish
+      hint "restart your shell or run: exec fish"
+      ;;
+    *)
+      die "unsupported shell: $shell"
+      ;;
+  esac
+  SHELL_SETUP_DONE=1
+}
+
+auto_shell_setup() {
+  if [ "$SKIP_RC" = 1 ]; then
+    return
+  fi
+  if [ "$EDIT_ZSHRC" = 1 ] || [ "$EDIT_BASHRC" = 1 ] || [ "$EDIT_FISHRC" = 1 ]; then
+    return
+  fi
+
+  shell=$TARGET_SHELL
+  [ -n "$shell" ] || shell=$(detect_shell)
+
+  case "$shell" in
+    zsh) rc_path="$HOME/.zshrc" ;;
+    bash) rc_path="$HOME/.bashrc" ;;
+    fish) rc_path="$HOME/.config/fish/config.fish" ;;
+    *) return ;;
+  esac
+
+  [ -n "${HOME:-}" ] || return
+
+  if [ "$ASSUME_YES" = 1 ]; then
+    setup_shell_rc "$shell"
+    return
+  fi
+
+  if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+    warn "non-interactive run; skipping shell-integration setup (use --yes to auto-accept)"
+    return
+  fi
+
+  if prompt_yes_no "add qsh shell integration to $rc_path?" y; then
+    setup_shell_rc "$shell"
+  else
+    say "skipping rc edit; add integration later with: qsh init $shell"
+  fi
+}
+
 install_qsh() {
   dest="$BIN_DIR/qsh"
   tmp="$BIN_DIR/.qsh.$$"
@@ -424,6 +525,12 @@ while [ "$#" -gt 0 ]; do
     --emit-init)
       EMIT_INIT=1
       ;;
+    -y|--yes)
+      ASSUME_YES=1
+      ;;
+    --no-modify-rc)
+      SKIP_RC=1
+      ;;
     --uninstall)
       DO_UNINSTALL=1
       ;;
@@ -465,28 +572,16 @@ install_qsh
 
 QSH_BIN="$BIN_DIR/qsh"
 
-if [ "$EDIT_ZSHRC" = 1 ]; then
-  [ -n "${HOME:-}" ] || die "--zshrc needs HOME to be set"
-  append_path_once "$HOME/.zshrc" '# qsh PATH' "export PATH=\"$BIN_DIR:\$PATH\"" "zsh PATH"
-  append_integration_once "$HOME/.zshrc" zsh '# qsh zsh integration' "eval \"\$($QSH_BIN init zsh)\"" zsh
-fi
+if [ "$EDIT_ZSHRC" = 1 ]; then setup_shell_rc zsh; fi
+if [ "$EDIT_BASHRC" = 1 ]; then setup_shell_rc bash; fi
+if [ "$EDIT_FISHRC" = 1 ]; then setup_shell_rc fish; fi
 
-if [ "$EDIT_BASHRC" = 1 ]; then
-  [ -n "${HOME:-}" ] || die "--bashrc needs HOME to be set"
-  append_path_once "$HOME/.bashrc" '# qsh PATH' "export PATH=\"$BIN_DIR:\$PATH\"" "bash PATH"
-  append_integration_once "$HOME/.bashrc" bash '# qsh bash integration' "eval \"\$($QSH_BIN init bash)\"" bash
-fi
-
-if [ "$EDIT_FISHRC" = 1 ]; then
-  [ -n "${HOME:-}" ] || die "--fishrc needs HOME to be set"
-  append_path_once "$HOME/.config/fish/config.fish" '# qsh PATH' "fish_add_path $BIN_DIR" "fish PATH"
-  append_integration_once "$HOME/.config/fish/config.fish" fish '# qsh fish integration' "$QSH_BIN init fish | source" fish
-fi
+auto_shell_setup
 
 if [ "$EMIT_INIT" = 1 ]; then
   [ -n "$TARGET_SHELL" ] || TARGET_SHELL=$(detect_shell)
   "$QSH_BIN" init "$TARGET_SHELL"
-else
+elif [ "$SHELL_SETUP_DONE" != 1 ]; then
   say "add shell integration with one of:"
   hint "eval \"\$($QSH_BIN init zsh)\""
   hint "eval \"\$($QSH_BIN init bash)\""
