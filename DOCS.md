@@ -174,7 +174,7 @@ codex login
 qsh config set providers.openai.backend cli
 ```
 
-For per-project overrides, add `backend=cli` to `.qshrc`. The Claude CLI backend ignores `smart` token-budget settings because Claude Code exposes model choice but not the API's max-token or thinking-budget controls.
+For per-project overrides, add `backend = "cli"` to `qsh.toml`. The Claude CLI backend ignores `smart` token-budget settings because Claude Code exposes model choice but not the API's max-token or thinking-budget controls.
 
 ## Shell Integration
 
@@ -307,35 +307,46 @@ This lets tasks such as "run the tests" or "format this project" pick the right 
 
 ## Configuration
 
-Configuration can come from CLI flags, environment variables, `.qshrc`, and the global config file.
+Configuration can come from CLI flags, environment variables, `qsh.toml`, and the global config file.
 
-### Per-Project `.qshrc`
+### Per-Project `qsh.toml`
 
-Drop a `.qshrc` in any directory, or an ancestor of it, to set defaults for that tree. The closest `.qshrc` wins.
+Drop a `qsh.toml` in any directory, or an ancestor of it, to set defaults for that tree. The closest `qsh.toml` wins.
 
-```text
-# .qshrc
-provider=claude
-backend=cli
-mode=smart
-model=claude-sonnet-4-6
----
+```toml
+# qsh.toml
+provider = "claude"
+backend  = "cli"
+mode     = "smart"
+model    = "claude-sonnet-4-6"
+
+# Optional: pick a different model per mode. When set, `models.fast` /
+# `models.smart` override `model` based on the resolved mode.
+[models]
+fast  = "claude-haiku-4-5"
+smart = "claude-opus-4-7"
+
+prompt = """
 This codebase uses Bun, not Node. Prefer bun over npm/pnpm.
 Tests run with bun test; build is bun run build.
 Always prefer ripgrep over grep, fd over find.
+"""
 ```
 
-Recognized keys are `provider`, `backend`, `mode`, and `model`. Everything after the `---` line is free-form project guidance appended to the system prompt.
+Recognized top-level keys are `provider`, `backend`, `mode`, `model`, and `prompt`. The `[models]` table accepts `fast` / `smart` for per-mode model overrides. The `prompt` value is free-form project guidance appended to the system prompt.
+
+Per TOML rules, top-level keys (`provider`, `mode`, `model`, `prompt`, ...) must appear **before** any `[table]` header — otherwise they'll be parsed as members of that table.
 
 Precedence:
 
 | Setting | Precedence |
 | ------- | ---------- |
-| Provider | Provider flags > `QSH_PROVIDER` > global config > `.qshrc` > auto-detect |
-| Backend | `QSH_BACKEND` > global config > `.qshrc` > auto-detected CLI fallback > API default |
-| Mode/model | CLI flag > `.qshrc` > global config > env var > built-in default |
+| Provider | Provider flags > `QSH_PROVIDER` > global config > `qsh.toml` > auto-detect |
+| Backend | `QSH_BACKEND` > global config > `qsh.toml` > auto-detected CLI fallback > API default |
+| Mode | CLI flag > `qsh.toml` > global config > env var > built-in default (`fast`) |
+| Model | CLI `-m` > `qsh.toml` (`models.<mode>` then `model`) > global config (`models.<mode>` then `model`) > env var > built-in default |
 
-`.qshrc` is parsed, not sourced. Shell substitutions inside it are treated as literal text. Comments and blank lines are skipped.
+`qsh.toml` is parsed as standard TOML.
 
 ### Global Config
 
@@ -348,6 +359,10 @@ qsh config set mode fast
 echo "$ANTHROPIC_API_KEY" | qsh config set providers.claude.api_key
 qsh config set providers.claude.model claude-sonnet-4-6
 qsh config set providers.claude.backend cli
+
+# Pick a different model per mode (overrides `providers.<p>.model`).
+qsh config set providers.claude.models.fast  claude-haiku-4-5
+qsh config set providers.claude.models.smart claude-opus-4-7
 
 # Tune behavior.
 qsh config set providers.openai.tokens.smart 32000
@@ -373,6 +388,8 @@ Settable keys:
 | `providers.<p>.api_key` | string, falls back to `<P>_API_KEY` env | unset |
 | `providers.<openai|claude>.backend` | `api` or `cli` | `api` |
 | `providers.<p>.model` | string, falls back to `<P>_MODEL` env and then built-in default | unset |
+| `providers.<p>.models.fast` | string, per-mode model override for `fast` (wins over `model`) | unset |
+| `providers.<p>.models.smart` | string, per-mode model override for `smart` (wins over `model`) | unset |
 | `providers.<p>.tokens.fast` | u32 max output tokens | 1000 |
 | `providers.<p>.tokens.smart` | u32 max output tokens | 16000, except Claude 10000 |
 | `providers.claude.tokens.thinking_budget` | u32 Claude extended-thinking budget | 5000 |

@@ -129,7 +129,7 @@ OUTPUT: curl -fLo file.bin https://example.com/file.bin"#
 }
 
 pub struct DirectivesArgs<'a> {
-    pub qshrc_prompt: &'a str,
+    pub project_prompt: &'a str,
     pub retry: bool,
     pub refine: bool,
     pub explain: bool,
@@ -139,9 +139,9 @@ pub struct DirectivesArgs<'a> {
 pub fn extra_directives(args: &DirectivesArgs<'_>) -> String {
     let mut out = String::new();
 
-    if !args.qshrc_prompt.is_empty() {
-        out.push_str("\n\nPROJECT DIRECTIVES (from .qshrc)\n");
-        out.push_str(args.qshrc_prompt);
+    if !args.project_prompt.is_empty() {
+        out.push_str("\n\nPROJECT DIRECTIVES (from qsh.toml)\n");
+        out.push_str(args.project_prompt);
     }
 
     if args.retry {
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn directives_loaded_from_prompt_files() {
         let directives = extra_directives(&DirectivesArgs {
-            qshrc_prompt: "Prefer cargo nextest.",
+            project_prompt: "Prefer cargo nextest.",
             retry: true,
             refine: false,
             explain: true,
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn alts_template_substitutes_counts() {
         let directives = extra_directives(&DirectivesArgs {
-            qshrc_prompt: "",
+            project_prompt: "",
             retry: false,
             refine: false,
             explain: false,

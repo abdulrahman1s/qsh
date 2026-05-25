@@ -1,5 +1,5 @@
 use super::cli::ConfigSetArgs;
-use crate::config::{Backend, Provider};
+use crate::config::{Backend, Mode, Provider};
 use crate::providers as provider_helpers;
 use crate::util::{
     cache,
@@ -13,10 +13,10 @@ use std::process::Command;
 
 const TEMPLATE: &str = r#"# qsh config
 # Generated automatically. Edit with `qsh config edit` or `qsh config set`.
-# All keys are optional. Precedence: CLI > .qshrc > this file > env vars > defaults.
+# All keys are optional. Precedence: CLI > qsh.toml > this file > env vars > defaults.
 
 # ─── core ──────────────────────────────────────────────────────────────────
-# Default provider when no CLI flag, env var, or .qshrc says otherwise.
+# Default provider when no CLI flag, env var, or qsh.toml says otherwise.
 # provider = "claude"          # gemini | openai | claude | ollama
 
 # Default mode. "fast" = cheap/low-latency; "smart" = larger budget + reasoning.
@@ -26,10 +26,17 @@ const TEMPLATE: &str = r#"# qsh config
 # Each provider block is independent. `api_key` falls back to the matching
 # env var (e.g. $ANTHROPIC_API_KEY). `model` falls back to the matching
 # *_MODEL env var, then the built-in default for that provider.
+#
+# Use `[providers.<p>.models]` to pick a different model per mode. When set,
+# `models.fast` / `models.smart` override the bare `model` field; the bare
+# `model` is then just the fallback if either per-mode value is missing.
 
 # [providers.gemini]
 # api_key = "..."
 # model   = "gemini-3.5-flash"
+# [providers.gemini.models]
+# fast  = "gemini-3.5-flash"
+# smart = "gemini-3.5-pro"
 # [providers.gemini.tokens]
 # fast  = 1000                 # max output tokens in fast mode
 # smart = 16000                # max output tokens in smart mode
@@ -38,6 +45,9 @@ const TEMPLATE: &str = r#"# qsh config
 # api_key = "..."
 # backend = "api"  # or "cli" to use Codex CLI
 # model   = "gpt-5.4-mini"
+# [providers.openai.models]
+# fast  = "gpt-5.4-mini"
+# smart = "gpt-5.4"
 # [providers.openai.tokens]
 # fast  = 1000
 # smart = 16000
@@ -46,6 +56,9 @@ const TEMPLATE: &str = r#"# qsh config
 # api_key = "..."
 # backend = "api"  # or "cli" to use Claude Code CLI
 # model   = "claude-sonnet-4-6"
+# [providers.claude.models]
+# fast  = "claude-haiku-4-5"
+# smart = "claude-opus-4-7"
 # [providers.claude.tokens]
 # fast            = 1000
 # smart           = 10000      # Claude's smart-mode max_tokens
@@ -54,6 +67,9 @@ const TEMPLATE: &str = r#"# qsh config
 # [providers.ollama]
 # model    = "llama3"
 # base_url = "http://127.0.0.1:11434"
+# [providers.ollama.models]
+# fast  = "llama3"
+# smart = "llama3:70b"
 # [providers.ollama.tokens]
 # fast  = 1000
 # smart = 16000
@@ -110,8 +126,14 @@ pub fn show(settings: &Settings) -> i32 {
         let (key_val, key_src) = api_key_source(settings, p);
         println!("      api_key:         {:<24} [{}]", key_val, key_src);
 
-        let (m_val, m_src) = model_source(settings, p);
+        let (m_val, m_src) = model_default_source(settings, p);
         println!("      model:           {:<24} [{}]", m_val, m_src);
+
+        let (mf_val, mf_src) = model_mode_source(settings, p, Mode::Fast);
+        println!("      models.fast:     {:<24} [{}]", mf_val, mf_src);
+
+        let (ms_val, ms_src) = model_mode_source(settings, p, Mode::Smart);
+        println!("      models.smart:    {:<24} [{}]", ms_val, ms_src);
 
         let (b_val, b_src) = backend_source(settings, p);
         println!("      backend:         {:<24} [{}]", b_val, b_src);
@@ -282,9 +304,28 @@ fn api_key_source(settings: &Settings, p: Provider) -> (String, String) {
     ("(not set)".into(), "missing".into())
 }
 
-fn model_source(settings: &Settings, p: Provider) -> (String, String) {
-    if let Some(m) = settings.model(p) {
+fn model_default_source(settings: &Settings, p: Provider) -> (String, String) {
+    if let Some(m) = settings.model_default(p) {
         return (m.into(), "config.toml".into());
+    }
+    let env_var = provider_helpers::model_env(p);
+    if let Ok(v) = env::var(env_var)
+        && !v.is_empty()
+    {
+        return (v, format!("env {}", env_var));
+    }
+    if let Some(d) = provider_helpers::default_model(p) {
+        return (d.into(), "default".into());
+    }
+    ("(auto-detect)".into(), "ollama list".into())
+}
+
+fn model_mode_source(settings: &Settings, p: Provider, mode: Mode) -> (String, String) {
+    if let Some(m) = settings.model_mode(p, mode) {
+        return (m.into(), "config.toml".into());
+    }
+    if let Some(m) = settings.model_default(p) {
+        return (m.into(), "config.toml (fallback)".into());
     }
     let env_var = provider_helpers::model_env(p);
     if let Ok(v) = env::var(env_var)
@@ -436,6 +477,8 @@ enum Key {
     ApiKey(Provider),
     Backend(Provider),
     Model(Provider),
+    ModelFast(Provider),
+    ModelSmart(Provider),
     OllamaBaseUrl,
     TokensFast(Provider),
     TokensSmart(Provider),
@@ -499,6 +542,15 @@ fn parse_key(s: &str) -> Result<Key, String> {
             _ => return Err(format!("unknown tokens key: {}", parts[3])),
         }
     }
+    if parts.len() == 4 && parts[0] == "providers" && parts[2] == "models" {
+        let p =
+            Provider::parse(parts[1]).ok_or_else(|| format!("unknown provider: {}", parts[1]))?;
+        match parts[3] {
+            "fast" => return Ok(Key::ModelFast(p)),
+            "smart" => return Ok(Key::ModelSmart(p)),
+            _ => return Err(format!("unknown models key: {}", parts[3])),
+        }
+    }
     Err(format!("unknown key: {}", s))
 }
 
@@ -509,6 +561,8 @@ fn print_allowed_keys() {
     for p in PROVIDERS {
         eprintln!("  providers.{}.api_key", p.as_str());
         eprintln!("  providers.{}.model", p.as_str());
+        eprintln!("  providers.{}.models.fast", p.as_str());
+        eprintln!("  providers.{}.models.smart", p.as_str());
         eprintln!(
             "  providers.{}.tokens.fast            (positive integer)",
             p.as_str()
@@ -564,7 +618,11 @@ fn validate_value(key: &Key, value: &str) -> Result<(), String> {
             "fast" | "smart" => {}
             _ => return Err(format!("invalid mode: {} (expected fast|smart)", value)),
         },
-        Key::ApiKey(_) | Key::Model(_) | Key::OllamaBaseUrl => {
+        Key::ApiKey(_)
+        | Key::Model(_)
+        | Key::ModelFast(_)
+        | Key::ModelSmart(_)
+        | Key::OllamaBaseUrl => {
             if value.is_empty() {
                 return Err("value cannot be empty".into());
             }
@@ -625,8 +683,8 @@ fn apply(doc: &mut toml_edit::DocumentMut, key: &Key, value: &str) {
         sub[leaf] = v;
     };
 
-    let provider_tokens_leaf =
-        |doc: &mut toml_edit::DocumentMut, p: Provider, leaf: &str, v: Item| {
+    let provider_sub_leaf =
+        |doc: &mut toml_edit::DocumentMut, p: Provider, sub_table: &str, leaf: &str, v: Item| {
             let providers = doc
                 .entry("providers")
                 .or_insert_with(|| Item::Table(Table::new()))
@@ -639,12 +697,12 @@ fn apply(doc: &mut toml_edit::DocumentMut, key: &Key, value: &str) {
                 .as_table_mut()
                 .expect("provider entry is a table");
             sub.set_implicit(true);
-            let tokens = sub
-                .entry("tokens")
+            let nested = sub
+                .entry(sub_table)
                 .or_insert_with(|| Item::Table(Table::new()))
                 .as_table_mut()
-                .expect("tokens entry is a table");
-            tokens[leaf] = v;
+                .expect("nested entry is a table");
+            nested[leaf] = v;
         };
 
     let section_leaf = |doc: &mut toml_edit::DocumentMut, section: &str, leaf: &str, v: Item| {
@@ -663,11 +721,17 @@ fn apply(doc: &mut toml_edit::DocumentMut, key: &Key, value: &str) {
         Key::Backend(p) => provider_leaf(doc, *p, "backend", tv(value)),
         Key::Model(p) => provider_leaf(doc, *p, "model", tv(value)),
         Key::OllamaBaseUrl => provider_leaf(doc, Provider::Ollama, "base_url", tv(value)),
-        Key::TokensFast(p) => provider_tokens_leaf(doc, *p, "fast", tv(int(value))),
-        Key::TokensSmart(p) => provider_tokens_leaf(doc, *p, "smart", tv(int(value))),
-        Key::ClaudeThinkingBudget => {
-            provider_tokens_leaf(doc, Provider::Claude, "thinking_budget", tv(int(value)))
-        }
+        Key::TokensFast(p) => provider_sub_leaf(doc, *p, "tokens", "fast", tv(int(value))),
+        Key::TokensSmart(p) => provider_sub_leaf(doc, *p, "tokens", "smart", tv(int(value))),
+        Key::ClaudeThinkingBudget => provider_sub_leaf(
+            doc,
+            Provider::Claude,
+            "tokens",
+            "thinking_budget",
+            tv(int(value)),
+        ),
+        Key::ModelFast(p) => provider_sub_leaf(doc, *p, "models", "fast", tv(value)),
+        Key::ModelSmart(p) => provider_sub_leaf(doc, *p, "models", "smart", tv(value)),
         Key::RetryKeep => section_leaf(doc, "retry", "keep", tv(int(value))),
         Key::RetryWindowMinutes => section_leaf(doc, "retry", "window_minutes", tv(int(value))),
         Key::CaptureStderrBytes => section_leaf(doc, "capture", "stderr_bytes", tv(int(value))),
@@ -778,7 +842,7 @@ mod tests {
         assert_eq!(parsed.mode.as_deref(), Some("smart"));
         assert_eq!(parsed.api_key(Provider::Claude), Some("sk-ant-test"));
         assert_eq!(parsed.backend(Provider::Claude), Some(Backend::Cli));
-        assert_eq!(parsed.model(Provider::Openai), Some("gpt-foo"));
+        assert_eq!(parsed.model_default(Provider::Openai), Some("gpt-foo"));
         assert_eq!(parsed.ollama_base_url(), Some("http://localhost:11434"));
     }
 
@@ -826,6 +890,43 @@ mod tests {
     #[test]
     fn rejects_thinking_budget_on_non_claude() {
         assert!(parse_key("providers.openai.tokens.thinking_budget").is_err());
+    }
+
+    #[test]
+    fn parse_per_mode_model_keys() {
+        assert_eq!(
+            parse_key("providers.claude.models.fast").unwrap(),
+            Key::ModelFast(Provider::Claude)
+        );
+        assert_eq!(
+            parse_key("providers.openai.models.smart").unwrap(),
+            Key::ModelSmart(Provider::Openai)
+        );
+        assert!(parse_key("providers.claude.models.weird").is_err());
+    }
+
+    #[test]
+    fn apply_writes_per_mode_models() {
+        let mut doc: toml_edit::DocumentMut = "".parse().unwrap();
+        apply(
+            &mut doc,
+            &Key::ModelFast(Provider::Claude),
+            "claude-haiku-4-5",
+        );
+        apply(
+            &mut doc,
+            &Key::ModelSmart(Provider::Claude),
+            "claude-opus-4-7",
+        );
+        let parsed: Settings = toml::from_str(&doc.to_string()).unwrap();
+        assert_eq!(
+            parsed.model(Provider::Claude, Mode::Fast),
+            Some("claude-haiku-4-5")
+        );
+        assert_eq!(
+            parsed.model(Provider::Claude, Mode::Smart),
+            Some("claude-opus-4-7")
+        );
     }
 
     #[test]

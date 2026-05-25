@@ -3,7 +3,7 @@ use crate::config::{ALTS_MAX, ALTS_MIN, Backend, INDICATOR_MAX, Mode, Provider, 
 use crate::providers as provider;
 use crate::providers::stream;
 use crate::util::{
-    alts, cache, clean, context, env_detect, files, prompt, qshrc, retry,
+    alts, cache, clean, context, env_detect, files, project, prompt, retry,
     settings::{self, Settings},
     ui, xml_escape,
 };
@@ -63,7 +63,7 @@ pub async fn run(args: GenerateArgs) -> i32 {
 
         // Build per-iteration system prompt.
         let directives = prompt::extra_directives(&prompt::DirectivesArgs {
-            qshrc_prompt: &state.qshrc_prompt,
+            project_prompt: &state.project_prompt,
             retry: state.retry,
             refine: state.refine,
             explain: state.explain,
@@ -299,7 +299,7 @@ struct State {
     shell: Shell,
     task: String,
     original_task: String,
-    qshrc_prompt: String,
+    project_prompt: String,
     cwd_context: String,
     retry: bool,
     refine: bool,
@@ -492,14 +492,16 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         }
     }
 
-    // Load .qshrc — provider/backend are resolved later with their own precedence.
-    let mut qshrc_prompt = String::new();
-    let mut qshrc_provider: Option<String> = None;
-    let mut qshrc_backend: Option<String> = None;
-    if let Some(path) = qshrc::find() {
-        let rc = qshrc::load(&path);
-        qshrc_provider = rc.provider.clone();
-        qshrc_backend = rc.backend.clone();
+    // Load qsh.toml — provider/backend/model defaults are seeded below with
+    // their own precedence chains.
+    let mut project_prompt = String::new();
+    let mut project_provider: Option<String> = None;
+    let mut project_backend: Option<String> = None;
+    let mut project_cfg: Option<project::ProjectConfig> = None;
+    if let Some(path) = project::find() {
+        let rc = project::load(&path);
+        project_provider = rc.provider.clone();
+        project_backend = rc.backend.clone();
         if mode.is_none() {
             mode = match rc.mode.as_deref() {
                 Some("smart") => Some(Mode::Smart),
@@ -507,19 +509,17 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
                 _ => None,
             };
         }
-        if model.is_none() {
-            model = rc.model.clone();
-        }
-        qshrc_prompt = rc.prompt;
+        project_prompt = rc.prompt.clone();
+        project_cfg = Some(rc);
     }
 
-    // Resolve provider, backend, auth, model.
+    // Resolve provider, backend, auth.
     let env_pref = std::env::var("QSH_PROVIDER").ok();
     let probe = provider::RealProbe;
     let resolved = provider::resolve_provider(
         provider,
         env_pref.as_deref(),
-        qshrc_provider.as_deref(),
+        project_provider.as_deref(),
         &mut model,
         &settings,
         &probe,
@@ -537,7 +537,7 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         None,
         env_backend.as_deref(),
         &settings,
-        qshrc_backend.as_deref(),
+        project_backend.as_deref(),
         detected_backend,
     );
 
@@ -545,14 +545,8 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         ui::die(&e);
         return Err(1);
     }
-    let model = match provider::resolve_model(p, model, &settings) {
-        Ok(m) => m,
-        Err(e) => {
-            ui::die(&e);
-            return Err(1);
-        }
-    };
 
+    // Mode must be resolved before model so per-mode model overrides apply.
     let mode = mode
         .or(match settings.mode.as_deref() {
             Some("smart") => Some(Mode::Smart),
@@ -564,6 +558,23 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
             Ok("fast") => Mode::Fast,
             _ => Mode::Fast,
         });
+
+    // Project config model seeds resolve_model only when CLI/auto-detect
+    // didn't already produce a value.
+    if model.is_none()
+        && let Some(rc) = project_cfg.as_ref()
+        && let Some(m) = rc.model_for(mode)
+    {
+        model = Some(m.to_string());
+    }
+
+    let model = match provider::resolve_model(p, model, mode, &settings) {
+        Ok(m) => m,
+        Err(e) => {
+            ui::die(&e);
+            return Err(1);
+        }
+    };
 
     let alts = args.alts.unwrap_or(1);
 
@@ -580,7 +591,7 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         shell: args.shell,
         task,
         original_task,
-        qshrc_prompt,
+        project_prompt,
         cwd_context: String::new(),
         retry,
         refine: false,
@@ -721,7 +732,7 @@ Provider flags (default: auto-detect from API keys; override with $QSH_PROVIDER)
 Backends:
   default               API backend; auto-detect prefers API keys before CLI tools
   QSH_BACKEND=cli       Prefer CLI backend for Claude/OpenAI when supported
-  .qshrc                backend = cli
+  qsh.toml              backend = \"cli\"
   qsh config set providers.claude.backend cli
                         Use Claude Code CLI instead of the Anthropic API
   qsh config set providers.openai.backend cli
@@ -741,7 +752,7 @@ Context:
   QSH_NO_CONTEXT=1      Skip cwd-aware context for every call in this environment
   ./<path>              Include the file at <path> as labelled context (first 32KB per file)
                           Slice: ./path:N first N lines, ./path:-N last N, ./path:A-B inclusive range
-  .qshrc                Per-project defaults — searched up from cwd.
+  qsh.toml              Per-project defaults (TOML) — searched up from cwd.
 
 Alternatives:
   -a, --alts N          Ask the model for N (1-8) distinct candidate commands, pick via fzf

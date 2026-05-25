@@ -1,0 +1,82 @@
+# qsh global config — example.
+#
+# Drop this at `${XDG_CONFIG_HOME:-~/.config}/qsh/config.toml` (or run
+# `qsh config edit` to seed a similar template) and edit to taste.
+#
+# Precedence (highest wins):
+#   CLI flag   →   qsh.toml (project)   →   this file   →   env var   →   built-in default
+#
+# Every key is optional. Comment out anything you don't want to override.
+
+# ─── core ──────────────────────────────────────────────────────────────────
+
+# Default provider when no CLI flag, env var, or qsh.toml says otherwise.
+provider = "claude"            # gemini | openai | claude | ollama
+
+# Default mode. fast = cheap/low-latency; smart = larger budget + reasoning.
+mode = "fast"
+
+# ─── providers ─────────────────────────────────────────────────────────────
+# Each provider block is independent. `api_key` falls back to the matching
+# env var (e.g. $ANTHROPIC_API_KEY). The model resolution chain is:
+#   CLI -m  →  models.<mode>  →  model  →  $<P>_MODEL  →  built-in default
+
+[providers.gemini]
+# api_key = "..."
+model = "gemini-3.5-flash"
+[providers.gemini.models]
+fast  = "gemini-3.5-flash"
+smart = "gemini-3.5-pro"
+[providers.gemini.tokens]
+fast  = 1000                   # max output tokens in fast mode
+smart = 16000                  # max output tokens in smart mode
+
+[providers.openai]
+# api_key = "..."
+backend = "api"                # or "cli" to use Codex CLI
+model = "gpt-5.4-mini"
+[providers.openai.models]
+fast  = "gpt-5.4-mini"
+smart = "gpt-5.4"
+[providers.openai.tokens]
+fast  = 1000
+smart = 16000
+
+[providers.claude]
+# api_key = "..."
+backend = "api"                # or "cli" to use Claude Code CLI
+model = "claude-sonnet-4-6"
+[providers.claude.models]
+fast  = "claude-haiku-4-5"
+smart = "claude-opus-4-7"
+[providers.claude.tokens]
+fast            = 1000
+smart           = 10000        # Claude's smart-mode max_tokens cap
+thinking_budget = 5000         # Claude-only: extended-thinking budget
+
+[providers.ollama]
+base_url = "http://127.0.0.1:11434"
+model = "llama3"
+[providers.ollama.models]
+fast  = "llama3"
+smart = "llama3:70b"
+[providers.ollama.tokens]
+fast  = 1000
+smart = 16000
+
+# ─── retry replay ──────────────────────────────────────────────────────────
+# The shell wrapper feeds failed-command stderr back to the model so it can
+# self-correct on the next `?` invocation.
+[retry]
+keep           = 3             # how many recent failures to keep in history
+window_minutes = 10            # drop attempts older than this on next run
+
+# ─── stderr capture ────────────────────────────────────────────────────────
+[capture]
+stderr_bytes = 4096            # max bytes of stderr stored per failed attempt
+
+# ─── network timeouts (seconds) ────────────────────────────────────────────
+[timeouts]
+connect_secs = 10
+fast_secs    = 60
+smart_secs   = 180

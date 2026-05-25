@@ -47,7 +47,7 @@ src/
   util/               shared helpers
     env_detect.rs     /etc/os-release, clipboard, pkg-manager detection
     context.rs        cwd hints (git branch, lang manifests, build tools)
-    qshrc.rs          walk-up .qshrc parsing
+    project.rs        walk-up qsh.toml parsing
     prompt.rs         prompt file loading + placeholder substitution
     files.rs          ./path file context (XML-escaped, 32K budget)
     cache.rs          sha256 cache keys, atomic save
@@ -145,7 +145,7 @@ adds useful context, and match the release-commit format exactly.
 
 ## Don'ts
 
-- Don't add a config file outside `.qshrc`.
+- Don't add a config file outside `qsh.toml` (per-project, TOML) and the global `~/.config/qsh/config.toml`.
 - Don't link in a TUI framework. Stderr ANSI escapes are sufficient;
   the confirm prompt reads from `/dev/tty` directly.
 - Don't let anything except the final accepted command reach stdout

@@ -1,6 +1,6 @@
 use crate::config::{
     ATTEMPTS_KEEP, Backend, CLAUDE_SMART_BUDGET, CLAUDE_SMART_MAX, CURL_CONNECT_TIMEOUT_SECS,
-    CURL_TIMEOUT_FAST_SECS, CURL_TIMEOUT_SMART_SECS, Provider, RETRY_WINDOW_MIN, STDERR_CAP,
+    CURL_TIMEOUT_FAST_SECS, CURL_TIMEOUT_SMART_SECS, Mode, Provider, RETRY_WINDOW_MIN, STDERR_CAP,
     TOKENS_FAST, TOKENS_SMART,
 };
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,13 @@ pub struct ProviderSettings {
     pub model: Option<String>,
     pub base_url: Option<String>,
     pub tokens: Option<TokenSettings>,
+    pub models: Option<ModelSettings>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ModelSettings {
+    pub fast: Option<String>,
+    pub smart: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -97,11 +104,51 @@ impl Settings {
             .and_then(Backend::parse)
     }
 
-    pub fn model(&self, p: Provider) -> Option<&str> {
+    pub fn model(&self, p: Provider, mode: Mode) -> Option<&str> {
+        let ps = self.providers.get(p.as_str())?;
+        let per_mode = ps
+            .models
+            .as_ref()
+            .and_then(|m| match mode {
+                Mode::Fast => m.fast.as_deref(),
+                Mode::Smart => m.smart.as_deref(),
+            })
+            .filter(|s| !s.is_empty());
+        if per_mode.is_some() {
+            return per_mode;
+        }
+        ps.model.as_deref().filter(|s| !s.is_empty())
+    }
+
+    pub fn model_default(&self, p: Provider) -> Option<&str> {
         self.providers
             .get(p.as_str())
             .and_then(|s| s.model.as_deref())
             .filter(|s| !s.is_empty())
+    }
+
+    pub fn model_mode(&self, p: Provider, mode: Mode) -> Option<&str> {
+        self.providers
+            .get(p.as_str())
+            .and_then(|s| s.models.as_ref())
+            .and_then(|m| match mode {
+                Mode::Fast => m.fast.as_deref(),
+                Mode::Smart => m.smart.as_deref(),
+            })
+            .filter(|s| !s.is_empty())
+    }
+
+    pub fn any_model_set(&self, p: Provider) -> bool {
+        let Some(ps) = self.providers.get(p.as_str()) else {
+            return false;
+        };
+        if ps.model.as_deref().is_some_and(|s| !s.is_empty()) {
+            return true;
+        }
+        ps.models.as_ref().is_some_and(|m| {
+            m.fast.as_deref().is_some_and(|s| !s.is_empty())
+                || m.smart.as_deref().is_some_and(|s| !s.is_empty())
+        })
     }
 
     pub fn ollama_base_url(&self) -> Option<&str> {
@@ -221,7 +268,14 @@ smart_secs = 240
         assert_eq!(s.mode.as_deref(), Some("smart"));
         assert_eq!(s.backend(Provider::Claude), Some(Backend::Cli));
         assert_eq!(s.api_key(Provider::Claude), Some("sk-ant-test"));
-        assert_eq!(s.model(Provider::Claude), Some("claude-sonnet-4-6"));
+        assert_eq!(
+            s.model(Provider::Claude, Mode::Fast),
+            Some("claude-sonnet-4-6")
+        );
+        assert_eq!(
+            s.model(Provider::Claude, Mode::Smart),
+            Some("claude-sonnet-4-6")
+        );
         assert_eq!(s.ollama_base_url(), Some("http://localhost:11434"));
         assert_eq!(s.tokens_fast(Provider::Claude), 800);
         assert_eq!(s.tokens_smart(Provider::Claude), 20000);
@@ -243,7 +297,7 @@ smart_secs = 240
         assert!(s.mode.is_none());
         assert!(s.api_key(Provider::Openai).is_none());
         assert!(s.backend(Provider::Openai).is_none());
-        assert!(s.model(Provider::Openai).is_none());
+        assert!(s.model(Provider::Openai, Mode::Fast).is_none());
         // Defaults come through when unset.
         assert_eq!(s.tokens_fast(Provider::Openai), TOKENS_FAST);
         assert_eq!(s.tokens_smart(Provider::Openai), TOKENS_SMART);
@@ -263,7 +317,8 @@ model = ""
         let s: Settings = toml::from_str(src).unwrap();
         assert!(s.api_key(Provider::Claude).is_none());
         assert!(s.backend(Provider::Claude).is_none());
-        assert!(s.model(Provider::Claude).is_none());
+        assert!(s.model(Provider::Claude, Mode::Fast).is_none());
+        assert!(s.model(Provider::Claude, Mode::Smart).is_none());
     }
 
     #[test]
@@ -271,7 +326,57 @@ model = ""
         let s: Settings = toml::from_str("").unwrap();
         assert!(s.api_key(Provider::Gemini).is_none());
         assert!(s.backend(Provider::Gemini).is_none());
-        assert!(s.model(Provider::Gemini).is_none());
+        assert!(s.model(Provider::Gemini, Mode::Fast).is_none());
         assert!(s.ollama_base_url().is_none());
+    }
+
+    #[test]
+    fn per_mode_models_resolve() {
+        let src = r#"
+[providers.claude]
+model = "fallback-default"
+
+[providers.claude.models]
+fast  = "claude-haiku-4-5"
+smart = "claude-opus-4-7"
+"#;
+        let s: Settings = toml::from_str(src).unwrap();
+        assert_eq!(
+            s.model(Provider::Claude, Mode::Fast),
+            Some("claude-haiku-4-5")
+        );
+        assert_eq!(
+            s.model(Provider::Claude, Mode::Smart),
+            Some("claude-opus-4-7")
+        );
+        assert_eq!(s.model_default(Provider::Claude), Some("fallback-default"));
+        assert!(s.any_model_set(Provider::Claude));
+    }
+
+    #[test]
+    fn per_mode_only_falls_through_to_default() {
+        let src = r#"
+[providers.openai]
+model = "gpt-default"
+
+[providers.openai.models]
+smart = "gpt-smart"
+"#;
+        let s: Settings = toml::from_str(src).unwrap();
+        // smart override takes precedence
+        assert_eq!(s.model(Provider::Openai, Mode::Smart), Some("gpt-smart"));
+        // fast falls back to the bare `model`
+        assert_eq!(s.model(Provider::Openai, Mode::Fast), Some("gpt-default"));
+    }
+
+    #[test]
+    fn any_model_set_detects_per_mode_only() {
+        let src = r#"
+[providers.ollama.models]
+fast = "llama3"
+"#;
+        let s: Settings = toml::from_str(src).unwrap();
+        assert!(s.any_model_set(Provider::Ollama));
+        assert!(!s.any_model_set(Provider::Claude));
     }
 }

@@ -159,7 +159,7 @@ fn resolve_provider_with_env(
     if has_key(Provider::Openai, openai::API_KEY_ENV) {
         return Some((Provider::Openai, None));
     }
-    if settings.model(Provider::Ollama).is_some() || env_value(ollama::MODEL_ENV).is_some() {
+    if settings.any_model_set(Provider::Ollama) || env_value(ollama::MODEL_ENV).is_some() {
         return Some((Provider::Ollama, None));
     }
     if let Some(m) = default_ollama() {
@@ -257,12 +257,13 @@ fn real_env(key: &str) -> Option<String> {
 pub fn resolve_model(
     p: Provider,
     current: Option<String>,
+    mode: Mode,
     settings: &Settings,
 ) -> Result<String, String> {
     if let Some(m) = current.filter(|s| !s.is_empty()) {
         return Ok(m);
     }
-    if let Some(m) = settings.model(p) {
+    if let Some(m) = settings.model(p, mode) {
         return Ok(m.to_string());
     }
     let env_var = model_env(p);
