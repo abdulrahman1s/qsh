@@ -304,7 +304,7 @@ pub fn extract_delta(kind: StreamKind, payload: &str) -> Option<String> {
         StreamKind::Claude => claude::extract_delta(&v),
         StreamKind::Ollama => ollama::extract_delta(&v),
         StreamKind::ClaudeCli => {
-            let event = v.pointer("/stream_event/event").unwrap_or(&v);
+            let event = v.pointer("/event").unwrap_or(&v);
             claude::extract_delta(event)
         }
         StreamKind::CodexCli => {
@@ -513,11 +513,16 @@ backend = "cli"
 
     #[test]
     fn extract_claude_cli_delta() {
-        let p = r#"{"type":"stream_event","stream_event":{"event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"echo hi"}}}}"#;
+        let p = r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"echo hi"}},"session_id":"abc","parent_tool_use_id":null,"uuid":"x"}"#;
         assert_eq!(
             extract_delta(StreamKind::ClaudeCli, p).as_deref(),
             Some("echo hi")
         );
+        let non_delta = r#"{"type":"stream_event","event":{"type":"message_start","message":{}}}"#;
+        assert!(extract_delta(StreamKind::ClaudeCli, non_delta).is_none());
+        let assistant =
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"echo hi"}]}}"#;
+        assert!(extract_delta(StreamKind::ClaudeCli, assistant).is_none());
     }
 
     #[test]
