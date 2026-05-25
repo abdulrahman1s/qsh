@@ -1,4 +1,4 @@
-use super::{BuildArgs, PreparedRequest, json_headers, key_for};
+use super::{BuildArgs, PreparedCli, PreparedRequest, StreamKind, json_headers, key_for};
 use crate::config::{Mode, Provider};
 use serde_json::{Value, json};
 
@@ -29,6 +29,32 @@ pub(super) fn build(args: &BuildArgs<'_>) -> PreparedRequest {
         url: "https://api.openai.com/v1/responses".to_string(),
         headers,
         body,
+        provider: Provider::Openai,
+    }
+}
+
+pub(super) fn build_cli(args: &BuildArgs<'_>) -> PreparedCli {
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| ".".into());
+    PreparedCli {
+        program: "codex".into(),
+        args: vec![
+            "exec".into(),
+            "-m".into(),
+            args.model.into(),
+            "-C".into(),
+            cwd,
+            "--ephemeral".into(),
+            "--skip-git-repo-check".into(),
+            "--ignore-user-config".into(),
+            "-s".into(),
+            "read-only".into(),
+            "--json".into(),
+            "-".into(),
+        ],
+        stdin: format!("{}\n\n{}", args.system, args.task),
+        stream_kind: StreamKind::CodexCli,
         provider: Provider::Openai,
     }
 }

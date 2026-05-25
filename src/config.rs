@@ -62,3 +62,33 @@ impl Provider {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    Api,
+    Cli,
+}
+
+impl Backend {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Backend::Api => "api",
+            Backend::Cli => "cli",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "api" | "http" => Some(Backend::Api),
+            "cli" | "command" => Some(Backend::Cli),
+            _ => None,
+        }
+    }
+
+    pub fn supports(p: Provider, b: Backend) -> bool {
+        matches!(
+            (p, b),
+            (_, Backend::Api) | (Provider::Claude, Backend::Cli) | (Provider::Openai, Backend::Cli)
+        )
+    }
+}

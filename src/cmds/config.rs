@@ -1,5 +1,5 @@
 use super::cli::ConfigSetArgs;
-use crate::config::Provider;
+use crate::config::{Backend, Provider};
 use crate::providers as provider_helpers;
 use crate::util::{
     cache,
@@ -36,6 +36,7 @@ const TEMPLATE: &str = r#"# qsh config
 
 # [providers.openai]
 # api_key = "..."
+# backend = "api"  # or "cli" to use Codex CLI
 # model   = "gpt-5.4-mini"
 # [providers.openai.tokens]
 # fast  = 1000
@@ -43,6 +44,7 @@ const TEMPLATE: &str = r#"# qsh config
 
 # [providers.claude]
 # api_key = "..."
+# backend = "api"  # or "cli" to use Claude Code CLI
 # model   = "claude-sonnet-4-6"
 # [providers.claude.tokens]
 # fast            = 1000
@@ -110,6 +112,9 @@ pub fn show(settings: &Settings) -> i32 {
 
         let (m_val, m_src) = model_source(settings, p);
         println!("      model:           {:<24} [{}]", m_val, m_src);
+
+        let (b_val, b_src) = backend_source(settings, p);
+        println!("      backend:         {:<24} [{}]", b_val, b_src);
 
         if p == Provider::Ollama {
             let (u_val, u_src) = ollama_url_source(settings);
@@ -293,6 +298,21 @@ fn model_source(settings: &Settings, p: Provider) -> (String, String) {
     ("(auto-detect)".into(), "ollama list".into())
 }
 
+fn backend_source(settings: &Settings, p: Provider) -> (String, String) {
+    if let Ok(v) = env::var("QSH_BACKEND")
+        && let Some(b) = Backend::parse(&v)
+        && Backend::supports(p, b)
+    {
+        return (b.as_str().into(), "env QSH_BACKEND".into());
+    }
+    if let Some(b) = settings.backend(p)
+        && Backend::supports(p, b)
+    {
+        return (b.as_str().into(), "config.toml".into());
+    }
+    ("api".into(), "default".into())
+}
+
 fn ollama_url_source(settings: &Settings) -> (String, String) {
     if let Some(u) = settings.ollama_base_url() {
         return (u.into(), "config.toml".into());
@@ -414,6 +434,7 @@ enum Key {
     Provider,
     Mode,
     ApiKey(Provider),
+    Backend(Provider),
     Model(Provider),
     OllamaBaseUrl,
     TokensFast(Provider),
@@ -445,6 +466,15 @@ fn parse_key(s: &str) -> Result<Key, String> {
             Provider::parse(parts[1]).ok_or_else(|| format!("unknown provider: {}", parts[1]))?;
         match parts[2] {
             "api_key" => return Ok(Key::ApiKey(p)),
+            "backend" if p == Provider::Claude || p == Provider::Openai => {
+                return Ok(Key::Backend(p));
+            }
+            "backend" => {
+                return Err(format!(
+                    "backend is only supported for claude and openai, not {}",
+                    p.as_str()
+                ));
+            }
             "model" => return Ok(Key::Model(p)),
             "base_url" if p == Provider::Ollama => return Ok(Key::OllamaBaseUrl),
             "base_url" => {
@@ -488,6 +518,8 @@ fn print_allowed_keys() {
             p.as_str()
         );
     }
+    eprintln!("  providers.claude.backend             (api|cli)");
+    eprintln!("  providers.openai.backend             (api|cli)");
     eprintln!("  providers.ollama.base_url");
     eprintln!("  providers.claude.tokens.thinking_budget (positive integer)");
     eprintln!("  retry.keep                            (positive integer)");
@@ -535,6 +567,23 @@ fn validate_value(key: &Key, value: &str) -> Result<(), String> {
         Key::ApiKey(_) | Key::Model(_) | Key::OllamaBaseUrl => {
             if value.is_empty() {
                 return Err("value cannot be empty".into());
+            }
+        }
+        Key::Backend(p) => {
+            if *p != Provider::Claude && *p != Provider::Openai {
+                return Err(format!(
+                    "backend is only supported for claude and openai, not {}",
+                    p.as_str()
+                ));
+            }
+            let b = Backend::parse(value)
+                .ok_or_else(|| format!("invalid backend: {} (expected api|cli)", value))?;
+            if !Backend::supports(*p, b) {
+                return Err(format!(
+                    "backend {} is not supported for {}",
+                    b.as_str(),
+                    p.as_str()
+                ));
             }
         }
         Key::TokensFast(_)
@@ -611,6 +660,7 @@ fn apply(doc: &mut toml_edit::DocumentMut, key: &Key, value: &str) {
         Key::Provider => doc["provider"] = tv(value),
         Key::Mode => doc["mode"] = tv(value),
         Key::ApiKey(p) => provider_leaf(doc, *p, "api_key", tv(value)),
+        Key::Backend(p) => provider_leaf(doc, *p, "backend", tv(value)),
         Key::Model(p) => provider_leaf(doc, *p, "model", tv(value)),
         Key::OllamaBaseUrl => provider_leaf(doc, Provider::Ollama, "base_url", tv(value)),
         Key::TokensFast(p) => provider_tokens_leaf(doc, *p, "fast", tv(int(value))),
@@ -658,6 +708,10 @@ mod tests {
             Key::Model(Provider::Openai)
         );
         assert_eq!(
+            parse_key("providers.openai.backend").unwrap(),
+            Key::Backend(Provider::Openai)
+        );
+        assert_eq!(
             parse_key("providers.ollama.base_url").unwrap(),
             Key::OllamaBaseUrl
         );
@@ -666,6 +720,12 @@ mod tests {
     #[test]
     fn parse_rejects_base_url_on_non_ollama() {
         assert!(parse_key("providers.claude.base_url").is_err());
+    }
+
+    #[test]
+    fn parse_rejects_backend_on_unsupported_provider() {
+        assert!(parse_key("providers.gemini.backend").is_err());
+        assert!(parse_key("providers.ollama.backend").is_err());
     }
 
     #[test]
@@ -689,6 +749,14 @@ mod tests {
     }
 
     #[test]
+    fn validate_backend() {
+        assert!(validate_value(&Key::Backend(Provider::Claude), "cli").is_ok());
+        assert!(validate_value(&Key::Backend(Provider::Openai), "api").is_ok());
+        assert!(validate_value(&Key::Backend(Provider::Claude), "bogus").is_err());
+        assert!(validate_value(&Key::Backend(Provider::Gemini), "cli").is_err());
+    }
+
+    #[test]
     fn redact_short_and_long() {
         assert_eq!(redact("abc"), "***");
         assert_eq!(redact("abcdefgh"), "abc...fgh");
@@ -701,6 +769,7 @@ mod tests {
         apply(&mut doc, &Key::Provider, "claude");
         apply(&mut doc, &Key::Mode, "smart");
         apply(&mut doc, &Key::ApiKey(Provider::Claude), "sk-ant-test");
+        apply(&mut doc, &Key::Backend(Provider::Claude), "cli");
         apply(&mut doc, &Key::Model(Provider::Openai), "gpt-foo");
         apply(&mut doc, &Key::OllamaBaseUrl, "http://localhost:11434");
 
@@ -708,6 +777,7 @@ mod tests {
         assert_eq!(parsed.provider.as_deref(), Some("claude"));
         assert_eq!(parsed.mode.as_deref(), Some("smart"));
         assert_eq!(parsed.api_key(Provider::Claude), Some("sk-ant-test"));
+        assert_eq!(parsed.backend(Provider::Claude), Some(Backend::Cli));
         assert_eq!(parsed.model(Provider::Openai), Some("gpt-foo"));
         assert_eq!(parsed.ollama_base_url(), Some("http://localhost:11434"));
     }

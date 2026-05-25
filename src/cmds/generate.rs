@@ -1,5 +1,5 @@
 use super::cli::{GenerateArgs, Shell};
-use crate::config::{ALTS_MAX, ALTS_MIN, INDICATOR_MAX, Mode, Provider, STDIN_CAP};
+use crate::config::{ALTS_MAX, ALTS_MIN, Backend, INDICATOR_MAX, Mode, Provider, STDIN_CAP};
 use crate::providers as provider;
 use crate::providers::stream;
 use crate::util::{
@@ -86,6 +86,7 @@ pub async fn run(args: GenerateArgs) -> i32 {
 
         let req = provider::build(&provider::BuildArgs {
             provider: state.provider,
+            backend: state.backend,
             system: &sys,
             task: &task_full,
             model: &state.model,
@@ -98,6 +99,7 @@ pub async fn run(args: GenerateArgs) -> i32 {
         // Cache key + lookup.
         let key = cache::key(
             state.provider.as_str(),
+            state.backend.as_str(),
             &state.model,
             state.mode.as_str(),
             &sys,
@@ -286,6 +288,7 @@ enum NextAction {
 
 struct State {
     provider: Provider,
+    backend: Backend,
     model: String,
     mode: Mode,
     use_cache: bool,
@@ -318,7 +321,7 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
     let settings = settings::load();
 
     // Provider from explicit flag.
-    let mut provider = if args.gemini {
+    let provider = if args.gemini {
         Some(Provider::Gemini)
     } else if args.openai {
         Some(Provider::Openai)
@@ -477,15 +480,14 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         }
     }
 
-    // Load .qshrc — CLI > .qshrc > env > default.
+    // Load .qshrc — provider/backend are resolved later with their own precedence.
     let mut qshrc_prompt = String::new();
+    let mut qshrc_provider: Option<String> = None;
+    let mut qshrc_backend: Option<String> = None;
     if let Some(path) = qshrc::find() {
         let rc = qshrc::load(&path);
-        if provider.is_none()
-            && let Some(p) = rc.provider.as_deref().and_then(Provider::parse)
-        {
-            provider = Some(p);
-        }
+        qshrc_provider = rc.provider.clone();
+        qshrc_backend = rc.backend.clone();
         if mode.is_none() {
             mode = match rc.mode.as_deref() {
                 Some("smart") => Some(Mode::Smart),
@@ -499,16 +501,35 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
         qshrc_prompt = rc.prompt;
     }
 
-    // Resolve provider, key, model.
+    // Resolve provider, backend, auth, model.
     let env_pref = std::env::var("QSH_PROVIDER").ok();
-    let resolved = provider::resolve_provider(provider, env_pref, &mut model, &settings);
-    let Some(p) = resolved else {
+    let probe = provider::RealProbe;
+    let resolved = provider::resolve_provider(
+        provider,
+        env_pref.as_deref(),
+        qshrc_provider.as_deref(),
+        &mut model,
+        &settings,
+        &probe,
+    );
+    let Some((p, detected_backend)) = resolved else {
         ui::die(
-            "no provider configured. Set one with `qsh config set provider <gemini|openai|claude|ollama>` then pipe an API key:\n  echo $KEY | qsh config set providers.<provider>.api_key\nOr export GEMINI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY in your shell, or use --ollama -m MODEL.",
+            "no provider configured. Set one with `qsh config set provider <gemini|openai|claude|ollama>` then pipe an API key:\n  echo $KEY | qsh config set providers.<provider>.api_key\nOr export GEMINI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY in your shell, use --ollama -m MODEL, or install/login to the claude or codex CLI.",
         );
         return Err(1);
     };
-    if let Err(e) = provider::require_key(p, &settings) {
+
+    let env_backend = std::env::var("QSH_BACKEND").ok();
+    let backend = provider::resolve_backend(
+        p,
+        None,
+        env_backend.as_deref(),
+        &settings,
+        qshrc_backend.as_deref(),
+        detected_backend,
+    );
+
+    if let Err(e) = provider::require_auth(p, backend, &settings, &probe) {
         ui::die(&e);
         return Err(1);
     }
@@ -536,6 +557,7 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
 
     Ok(State {
         provider: p,
+        backend,
         model,
         mode,
         use_cache,
@@ -619,7 +641,7 @@ fn confirm(cmd: &mut String, state: &mut State, cache_dir: &Path, cache_file: &P
 fn debug_dump(
     state: &State,
     sys: &str,
-    req: &provider::PreparedRequest,
+    inv: &provider::PreparedInvocation,
     cache_file: &Path,
     cached: bool,
 ) {
@@ -628,10 +650,17 @@ fn debug_dump(
         eprintln!("cwd: {}", cwd.display());
     }
     eprintln!("provider: {}", state.provider.as_str());
+    eprintln!("backend: {}", state.backend.as_str());
     eprintln!("model: {}", state.model);
     eprintln!("mode: {}", state.mode.as_str());
     eprintln!("shell: {}", state.shell.as_str());
-    eprintln!("url: {}", req.url);
+    match inv {
+        provider::PreparedInvocation::Http(req) => eprintln!("url: {}", req.url),
+        provider::PreparedInvocation::Cli(cli) => {
+            eprintln!("cli provider: {}", cli.provider.as_str());
+            eprintln!("cli: {} {}", cli.program, cli.args.join(" "));
+        }
+    }
     eprintln!(
         "flags: cache={} context={} explain={} alts={} retry={} refine={}",
         state.use_cache as u32,
@@ -645,20 +674,25 @@ fn debug_dump(
     eprintln!("task bytes: {}", state.task.len());
     eprintln!("cache file: {}", cache_file.display());
     eprintln!("cached: {}", cached);
-    eprintln!("headers:");
-    for (k, v) in &req.headers {
-        let redacted = match k.to_ascii_lowercase().as_str() {
-            "authorization" => "Bearer <redacted>".to_string(),
-            "x-api-key" | "x-goog-api-key" => "<redacted>".to_string(),
-            _ => v.clone(),
-        };
-        eprintln!("  {}: {}", k, redacted);
+    match inv {
+        provider::PreparedInvocation::Http(req) => {
+            eprintln!("headers:");
+            for (k, v) in &req.headers {
+                let redacted = match k.to_ascii_lowercase().as_str() {
+                    "authorization" => "Bearer <redacted>".to_string(),
+                    "x-api-key" | "x-goog-api-key" => "<redacted>".to_string(),
+                    _ => v.clone(),
+                };
+                eprintln!("  {}: {}", k, redacted);
+            }
+            eprintln!("── qsh: request body ──");
+            eprintln!(
+                "{}",
+                serde_json::to_string_pretty(&req.body).unwrap_or_default()
+            );
+        }
+        provider::PreparedInvocation::Cli(_) => {}
     }
-    eprintln!("── qsh: request body ──");
-    eprintln!(
-        "{}",
-        serde_json::to_string_pretty(&req.body).unwrap_or_default()
-    );
 }
 
 fn print_help() {
@@ -671,6 +705,15 @@ Provider flags (default: auto-detect from API keys; override with $QSH_PROVIDER)
   -c, --claude          Anthropic Claude   (env: ANTHROPIC_API_KEY, model: claude-sonnet-4-6)
   -l, --ollama          Local Ollama       (env: OLLAMA_MODEL,      model: first installed)
   -p, --provider PROV   Same as the long form of the flags above
+
+Backends:
+  default               API backend; auto-detect prefers API keys before CLI tools
+  QSH_BACKEND=cli       Prefer CLI backend for Claude/OpenAI when supported
+  .qshrc                backend = cli
+  qsh config set providers.claude.backend cli
+                        Use Claude Code CLI instead of the Anthropic API
+  qsh config set providers.openai.backend cli
+                        Use Codex CLI instead of the OpenAI API
 
 Mode flags (default: fast; override with $QSH_MODE):
   -s, --smart           High reasoning/thinking — slower, more accurate
@@ -708,7 +751,7 @@ Other:
   QSH_DEBUG=1           Enable debug dumps by default
   -h, --help            Show this help
 
-Auto-detect order: gemini > claude > openai > ollama.
+Auto-detect order: gemini > claude > openai > ollama > claude CLI > codex CLI.
 "
     );
 }

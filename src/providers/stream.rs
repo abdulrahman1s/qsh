@@ -1,9 +1,12 @@
-use super::{PreparedRequest, StreamKind, extract_delta};
+use super::{PreparedCli, PreparedInvocation, PreparedRequest, StreamKind, extract_delta};
 use crate::config::Mode;
 use crate::util::settings::Settings;
 use futures_util::StreamExt;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::sync::watch;
 
@@ -42,6 +45,22 @@ pub fn classify_failure(raw: &str, net_err: Option<&str>) -> (FailureKind, Strin
             }
         }
     }
+    for line in raw.lines() {
+        if line.starts_with("data: ") {
+            continue;
+        }
+        if let Some(err) = json_result_error_message(line) {
+            return (FailureKind::Api, err);
+        }
+    }
+    for line in raw.lines() {
+        if line.starts_with("data: ") {
+            continue;
+        }
+        if let Some(err) = json_error_message(line) {
+            return (FailureKind::Api, err);
+        }
+    }
     if let Some(err) = net_err.filter(|s| !s.is_empty()) {
         let mut joined = String::new();
         for (i, l) in err.lines().take(4).enumerate() {
@@ -70,6 +89,10 @@ pub fn classify_failure(raw: &str, net_err: Option<&str>) -> (FailureKind, Strin
 
 fn json_error_message(s: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(s.trim()).ok()?;
+    json_error_message_value(&v)
+}
+
+fn json_error_message_value(v: &serde_json::Value) -> Option<String> {
     if let Some(err) = v.get("error") {
         match err {
             serde_json::Value::Object(_) => {
@@ -104,11 +127,34 @@ fn json_error_message(s: &str) -> Option<String> {
     if let Some(m) = v.get("message").and_then(|x| x.as_str()) {
         return Some(m.to_string());
     }
+    json_result_error_message_value(v)
+}
+
+fn json_result_error_message(s: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(s.trim()).ok()?;
+    json_result_error_message_value(&v)
+}
+
+fn json_result_error_message_value(v: &serde_json::Value) -> Option<String> {
+    if v.get("is_error").and_then(|x| x.as_bool()) == Some(true) {
+        let mut parts = Vec::new();
+        if let Some(status) = v.get("api_error_status").and_then(|x| x.as_i64()) {
+            parts.push(format!("HTTP {}", status));
+        }
+        if let Some(result) = v.get("result").and_then(|x| x.as_str())
+            && !result.is_empty()
+        {
+            parts.push(result.to_string());
+        }
+        if !parts.is_empty() {
+            return Some(parts.join(": "));
+        }
+    }
     None
 }
 
 pub fn start(
-    req: PreparedRequest,
+    inv: PreparedInvocation,
     mode: Mode,
     cancel_rx: watch::Receiver<bool>,
     settings: &Settings,
@@ -123,7 +169,12 @@ pub fn start(
             settings.timeout_fast()
         },
     };
-    let join = tokio::spawn(async move { run(req, timeouts, buf_clone, cancel_rx).await });
+    let join = tokio::spawn(async move {
+        match inv {
+            PreparedInvocation::Http(req) => run_http(req, timeouts, buf_clone, cancel_rx).await,
+            PreparedInvocation::Cli(cli) => run_cli(cli, buf_clone, cancel_rx).await,
+        }
+    });
     StreamHandle { join, buf }
 }
 
@@ -133,7 +184,7 @@ struct StreamTimeouts {
     total: u64,
 }
 
-async fn run(
+async fn run_http(
     req: PreparedRequest,
     timeouts: StreamTimeouts,
     buf: Arc<Mutex<String>>,
@@ -199,7 +250,7 @@ async fn run(
                     let trimmed = line.trim_end_matches(['\r', '\n']);
                     raw.push_str(trimmed);
                     raw.push('\n');
-                    process_line(trimmed, kind, &buf).await;
+                    process_http_line(trimmed, kind, &buf).await;
                 }
             }
             Err(e) => {
@@ -217,7 +268,7 @@ async fn run(
         let trimmed = line.trim_end_matches(['\r', '\n']);
         raw.push_str(trimmed);
         raw.push('\n');
-        process_line(trimmed, kind, &buf).await;
+        process_http_line(trimmed, kind, &buf).await;
     }
 
     let cancelled = *cancel_rx.borrow();
@@ -240,13 +291,137 @@ async fn run(
     }
 }
 
-async fn process_line(line: &str, kind: StreamKind, buf: &Arc<Mutex<String>>) {
+async fn run_cli(
+    cli: PreparedCli,
+    buf: Arc<Mutex<String>>,
+    mut cancel_rx: watch::Receiver<bool>,
+) -> StreamResult {
+    let mut child = match Command::new(&cli.program)
+        .args(&cli.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return StreamResult {
+                text: String::new(),
+                raw: String::new(),
+                net_err: Some(format!("failed to spawn {}: {e}", cli.program)),
+                status: None,
+            };
+        }
+    };
+
+    let write_task = child.stdin.take().map(|mut stdin| {
+        let input = cli.stdin.clone();
+        tokio::spawn(async move {
+            stdin.write_all(input.as_bytes()).await?;
+            stdin.shutdown().await
+        })
+    });
+
+    let Some(stdout) = child.stdout.take() else {
+        return StreamResult {
+            text: String::new(),
+            raw: String::new(),
+            net_err: Some(format!("{} stdout was not piped", cli.program)),
+            status: None,
+        };
+    };
+    let stderr_task = child.stderr.take().map(|mut stderr| {
+        tokio::spawn(async move {
+            let mut s = String::new();
+            stderr.read_to_string(&mut s).await.map(|_| s)
+        })
+    });
+
+    let mut raw = String::new();
+    let mut lines = BufReader::new(stdout).lines();
+    let mut stdout_err = None;
+
+    loop {
+        let line = tokio::select! {
+            l = lines.next_line() => l,
+            _ = cancel_rx.changed() => {
+                let _ = child.kill().await;
+                return StreamResult {
+                    text: buf.lock().await.clone(),
+                    raw,
+                    net_err: Some("cancelled".into()),
+                    status: None,
+                };
+            }
+        };
+
+        match line {
+            Ok(Some(line)) => {
+                let trimmed = line.trim_end_matches(['\r', '\n']);
+                raw.push_str(trimmed);
+                raw.push('\n');
+                process_json_line(trimmed, cli.stream_kind, &buf).await;
+            }
+            Ok(None) => break,
+            Err(e) => {
+                stdout_err = Some(e.to_string());
+                break;
+            }
+        }
+    }
+
+    if let Some(task) = write_task {
+        let _ = task.await;
+    }
+
+    let status = match child.wait().await {
+        Ok(s) => s,
+        Err(e) => {
+            return StreamResult {
+                text: buf.lock().await.clone(),
+                raw,
+                net_err: Some(e.to_string()),
+                status: None,
+            };
+        }
+    };
+
+    let stderr_buf = match stderr_task {
+        Some(task) => match task.await {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => e.to_string(),
+            Err(e) => e.to_string(),
+        },
+        None => String::new(),
+    };
+
+    let text = buf.lock().await.clone();
+    let status_code = status.code().map(|c| c as u16);
+    let net_err = if !status.success() && text.is_empty() {
+        Some(stderr_buf)
+    } else {
+        stdout_err
+    };
+
+    StreamResult {
+        text,
+        raw,
+        net_err,
+        status: status_code,
+    }
+}
+
+async fn process_http_line(line: &str, kind: StreamKind, buf: &Arc<Mutex<String>>) {
     let Some(payload) = line.strip_prefix("data: ") else {
         return;
     };
     if payload == "[DONE]" {
         return;
     }
+    process_json_line(payload, kind, buf).await;
+}
+
+async fn process_json_line(payload: &str, kind: StreamKind, buf: &Arc<Mutex<String>>) {
     if let Some(delta) = extract_delta(kind, payload) {
         buf.lock().await.push_str(&delta);
     }
@@ -271,6 +446,15 @@ mod tests {
         let (kind, msg) = classify_failure(raw, None);
         assert!(matches!(kind, FailureKind::Api));
         assert!(msg.contains("bad"));
+    }
+
+    #[test]
+    fn classify_api_error_in_jsonl() {
+        let raw = "{\"type\":\"result\",\"is_error\":true,\"api_error_status\":429,\"result\":\"rate limit\"}\n";
+        let (kind, msg) = classify_failure(raw, None);
+        assert!(matches!(kind, FailureKind::Api));
+        assert!(msg.contains("HTTP 429"));
+        assert!(msg.contains("rate limit"));
     }
 
     #[test]

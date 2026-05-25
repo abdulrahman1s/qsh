@@ -1,5 +1,5 @@
 use crate::config::{
-    ATTEMPTS_KEEP, CLAUDE_SMART_BUDGET, CLAUDE_SMART_MAX, CURL_CONNECT_TIMEOUT_SECS,
+    ATTEMPTS_KEEP, Backend, CLAUDE_SMART_BUDGET, CLAUDE_SMART_MAX, CURL_CONNECT_TIMEOUT_SECS,
     CURL_TIMEOUT_FAST_SECS, CURL_TIMEOUT_SMART_SECS, Provider, RETRY_WINDOW_MIN, STDERR_CAP,
     TOKENS_FAST, TOKENS_SMART,
 };
@@ -20,6 +20,7 @@ pub struct Settings {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ProviderSettings {
+    pub backend: Option<String>,
     pub api_key: Option<String>,
     pub model: Option<String>,
     pub base_url: Option<String>,
@@ -86,6 +87,14 @@ impl Settings {
             .get(p.as_str())
             .and_then(|s| s.api_key.as_deref())
             .filter(|s| !s.is_empty())
+    }
+
+    pub fn backend(&self, p: Provider) -> Option<Backend> {
+        self.providers
+            .get(p.as_str())
+            .and_then(|s| s.backend.as_deref())
+            .filter(|s| !s.is_empty())
+            .and_then(Backend::parse)
     }
 
     pub fn model(&self, p: Provider) -> Option<&str> {
@@ -182,6 +191,7 @@ provider = "claude"
 mode = "smart"
 
 [providers.claude]
+backend = "cli"
 api_key = "sk-ant-test"
 model = "claude-sonnet-4-6"
 
@@ -209,6 +219,7 @@ smart_secs = 240
         let s: Settings = toml::from_str(src).unwrap();
         assert_eq!(s.provider.as_deref(), Some("claude"));
         assert_eq!(s.mode.as_deref(), Some("smart"));
+        assert_eq!(s.backend(Provider::Claude), Some(Backend::Cli));
         assert_eq!(s.api_key(Provider::Claude), Some("sk-ant-test"));
         assert_eq!(s.model(Provider::Claude), Some("claude-sonnet-4-6"));
         assert_eq!(s.ollama_base_url(), Some("http://localhost:11434"));
@@ -231,6 +242,7 @@ smart_secs = 240
         assert_eq!(s.provider.as_deref(), Some("openai"));
         assert!(s.mode.is_none());
         assert!(s.api_key(Provider::Openai).is_none());
+        assert!(s.backend(Provider::Openai).is_none());
         assert!(s.model(Provider::Openai).is_none());
         // Defaults come through when unset.
         assert_eq!(s.tokens_fast(Provider::Openai), TOKENS_FAST);
@@ -245,10 +257,12 @@ smart_secs = 240
         let src = r#"
 [providers.claude]
 api_key = ""
+backend = ""
 model = ""
 "#;
         let s: Settings = toml::from_str(src).unwrap();
         assert!(s.api_key(Provider::Claude).is_none());
+        assert!(s.backend(Provider::Claude).is_none());
         assert!(s.model(Provider::Claude).is_none());
     }
 
@@ -256,6 +270,7 @@ model = ""
     fn missing_provider_section_is_none() {
         let s: Settings = toml::from_str("").unwrap();
         assert!(s.api_key(Provider::Gemini).is_none());
+        assert!(s.backend(Provider::Gemini).is_none());
         assert!(s.model(Provider::Gemini).is_none());
         assert!(s.ollama_base_url().is_none());
     }

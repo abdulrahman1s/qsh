@@ -47,6 +47,7 @@ pub struct ConfigSetArgs {
     /// Dotted key path. Allowed:
     ///   provider, mode,
     ///   providers.<gemini|openai|claude|ollama>.api_key,
+    ///   providers.<openai|claude>.backend,
     ///   providers.<gemini|openai|claude|ollama>.model,
     ///   providers.ollama.base_url
     pub key: String,

@@ -135,7 +135,9 @@ pub async fn typewriter(
 ) {
     if !std::io::stderr().is_terminal() {
         // Non-TTY: just wait for completion, then dump once.
-        let _ = join.await;
+        while !cancelled.load(Ordering::Relaxed) && !join.is_finished() {
+            tokio::time::sleep(Duration::from_millis(SPINNER_SLEEP_MS / 4)).await;
+        }
         let text = buf.lock().await.clone();
         eprintln!("\x1b[1;33m{}\x1b[0m", text);
         return;

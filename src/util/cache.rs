@@ -13,12 +13,21 @@ pub fn cache_dir() -> PathBuf {
     home.join(".cache").join("qsh")
 }
 
-pub fn key(provider: &str, model: &str, mode: &str, system: &str, task: &str) -> String {
+pub fn key(
+    provider: &str,
+    backend: &str,
+    model: &str,
+    mode: &str,
+    system: &str,
+    task: &str,
+) -> String {
     let task = task
         .trim_start_matches(|c: char| c.is_whitespace())
         .trim_end_matches(|c: char| c.is_whitespace());
     let mut hasher = Sha256::new();
     hasher.update(provider.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(backend.as_bytes());
     hasher.update(b"\n");
     hasher.update(model.as_bytes());
     hasher.update(b"\n");
@@ -63,15 +72,22 @@ mod tests {
 
     #[test]
     fn key_stable_with_whitespace() {
-        let a = key("openai", "gpt", "fast", "sys", "  foo  ");
-        let b = key("openai", "gpt", "fast", "sys", "foo");
+        let a = key("openai", "api", "gpt", "fast", "sys", "  foo  ");
+        let b = key("openai", "api", "gpt", "fast", "sys", "foo");
         assert_eq!(a, b);
     }
 
     #[test]
     fn key_differs_on_provider() {
-        let a = key("openai", "x", "fast", "sys", "task");
-        let b = key("gemini", "x", "fast", "sys", "task");
+        let a = key("openai", "api", "x", "fast", "sys", "task");
+        let b = key("gemini", "api", "x", "fast", "sys", "task");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn key_differs_on_backend() {
+        let a = key("openai", "api", "x", "fast", "sys", "task");
+        let b = key("openai", "cli", "x", "fast", "sys", "task");
         assert_ne!(a, b);
     }
 }

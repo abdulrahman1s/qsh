@@ -5,10 +5,16 @@ mod gemini;
 mod ollama;
 mod openai;
 
-use crate::config::{Mode, Provider};
+use crate::config::{Backend, Mode, Provider};
 use crate::util::settings::Settings;
 use serde_json::Value;
 use std::env;
+
+#[derive(Debug, Clone)]
+pub enum PreparedInvocation {
+    Http(PreparedRequest),
+    Cli(PreparedCli),
+}
 
 #[derive(Debug, Clone)]
 pub struct PreparedRequest {
@@ -18,8 +24,18 @@ pub struct PreparedRequest {
     pub provider: Provider,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreparedCli {
+    pub program: String,
+    pub args: Vec<String>,
+    pub stdin: String,
+    pub stream_kind: StreamKind,
+    pub provider: Provider,
+}
+
 pub struct BuildArgs<'a> {
     pub provider: Provider,
+    pub backend: Backend,
     pub system: &'a str,
     pub task: &'a str,
     pub model: &'a str,
@@ -35,6 +51,20 @@ pub enum StreamKind {
     Openai,
     Claude,
     Ollama,
+    ClaudeCli,
+    CodexCli,
+}
+
+pub trait BinaryProbe {
+    fn has(&self, name: &str) -> bool;
+}
+
+pub struct RealProbe;
+
+impl BinaryProbe for RealProbe {
+    fn has(&self, name: &str) -> bool {
+        which::which(name).is_ok()
+    }
 }
 
 pub fn api_key_env(p: Provider) -> Option<&'static str> {
@@ -70,66 +100,158 @@ pub fn default_ollama_model() -> Option<String> {
 
 pub fn resolve_provider(
     explicit: Option<Provider>,
-    env_pref: Option<String>,
+    env_pref: Option<&str>,
+    qshrc_provider: Option<&str>,
     model_hint: &mut Option<String>,
     settings: &Settings,
-) -> Option<Provider> {
+    probe: &dyn BinaryProbe,
+) -> Option<(Provider, Option<Backend>)> {
+    resolve_provider_with_env(
+        explicit,
+        env_pref,
+        qshrc_provider,
+        model_hint,
+        settings,
+        probe,
+        &real_env,
+        &default_ollama_model,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_provider_with_env(
+    explicit: Option<Provider>,
+    env_pref: Option<&str>,
+    qshrc_provider: Option<&str>,
+    model_hint: &mut Option<String>,
+    settings: &Settings,
+    probe: &dyn BinaryProbe,
+    env_value: &dyn Fn(&str) -> Option<String>,
+    default_ollama: &dyn Fn() -> Option<String>,
+) -> Option<(Provider, Option<Backend>)> {
     if let Some(p) = explicit {
-        return Some(p);
+        return Some((p, None));
     }
-    if let Some(s) = env_pref.as_deref()
+    if let Some(s) = env_pref
         && let Some(p) = Provider::parse(s)
     {
-        return Some(p);
+        return Some((p, None));
     }
     if let Some(s) = settings.provider.as_deref()
         && let Some(p) = Provider::parse(s)
     {
-        return Some(p);
+        return Some((p, None));
+    }
+    if let Some(s) = qshrc_provider
+        && let Some(p) = Provider::parse(s)
+    {
+        return Some((p, None));
     }
     let has_key = |p: Provider, env_key: &str| -> bool {
-        settings.api_key(p).is_some() || env::var(env_key).map(|v| !v.is_empty()).unwrap_or(false)
+        settings.api_key(p).is_some() || env_value(env_key).is_some()
     };
     if has_key(Provider::Gemini, gemini::API_KEY_ENV) {
-        return Some(Provider::Gemini);
+        return Some((Provider::Gemini, None));
     }
     if has_key(Provider::Claude, claude::API_KEY_ENV) {
-        return Some(Provider::Claude);
+        return Some((Provider::Claude, None));
     }
     if has_key(Provider::Openai, openai::API_KEY_ENV) {
-        return Some(Provider::Openai);
+        return Some((Provider::Openai, None));
     }
-    if settings.model(Provider::Ollama).is_some()
-        || env::var(ollama::MODEL_ENV)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
-    {
-        return Some(Provider::Ollama);
+    if settings.model(Provider::Ollama).is_some() || env_value(ollama::MODEL_ENV).is_some() {
+        return Some((Provider::Ollama, None));
     }
-    if let Some(m) = default_ollama_model() {
+    if let Some(m) = default_ollama() {
         if model_hint.is_none() {
             *model_hint = Some(m);
         }
-        return Some(Provider::Ollama);
+        return Some((Provider::Ollama, None));
+    }
+    if probe.has("claude") {
+        return Some((Provider::Claude, Some(Backend::Cli)));
+    }
+    if probe.has("codex") {
+        return Some((Provider::Openai, Some(Backend::Cli)));
     }
     None
 }
 
-pub fn require_key(p: Provider, settings: &Settings) -> Result<(), String> {
+pub fn resolve_backend(
+    p: Provider,
+    explicit: Option<Backend>,
+    env_pref: Option<&str>,
+    settings: &Settings,
+    qshrc_backend: Option<&str>,
+    detected: Option<Backend>,
+) -> Backend {
+    let chosen = explicit
+        .or_else(|| env_pref.and_then(Backend::parse))
+        .or_else(|| settings.backend(p))
+        .or_else(|| qshrc_backend.and_then(Backend::parse))
+        .or(detected)
+        .unwrap_or(Backend::Api);
+
+    if Backend::supports(p, chosen) {
+        chosen
+    } else {
+        Backend::Api
+    }
+}
+
+pub fn require_auth(
+    p: Provider,
+    b: Backend,
+    settings: &Settings,
+    probe: &dyn BinaryProbe,
+) -> Result<(), String> {
+    require_auth_with_env(p, b, settings, probe, &real_env)
+}
+
+fn require_auth_with_env(
+    p: Provider,
+    b: Backend,
+    settings: &Settings,
+    probe: &dyn BinaryProbe,
+    env_value: &dyn Fn(&str) -> Option<String>,
+) -> Result<(), String> {
+    match b {
+        Backend::Api => require_api_key_with_env(p, settings, env_value),
+        Backend::Cli => match p {
+            Provider::Claude => probe.has("claude").then_some(()).ok_or_else(|| {
+                "claude CLI not found. Install Claude Code, then run: claude /login".into()
+            }),
+            Provider::Openai => probe
+                .has("codex")
+                .then_some(())
+                .ok_or_else(|| "codex CLI not found. Install Codex, then run: codex login".into()),
+            _ => Err(format!("CLI backend not supported for {}", p.as_str())),
+        },
+    }
+}
+
+fn require_api_key_with_env(
+    p: Provider,
+    settings: &Settings,
+    env_value: &dyn Fn(&str) -> Option<String>,
+) -> Result<(), String> {
     if settings.api_key(p).is_some() {
         return Ok(());
     }
-    if let Some(key) = api_key_env(p) {
-        let v = env::var(key).unwrap_or_default();
-        if v.is_empty() {
-            return Err(format!(
-                "no API key for {p}: set ${key} in your environment, or run:\n  echo $YOUR_KEY | qsh config set providers.{p}.api_key",
-                p = p.as_str(),
-                key = key,
-            ));
-        }
+    if let Some(key) = api_key_env(p)
+        && env_value(key).is_none()
+    {
+        return Err(format!(
+            "no API key for {p}: set ${key} in your environment, or run:\n  echo $YOUR_KEY | qsh config set providers.{p}.api_key",
+            p = p.as_str(),
+            key = key,
+        ));
     }
     Ok(())
+}
+
+fn real_env(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|v| !v.is_empty())
 }
 
 pub fn resolve_model(
@@ -181,15 +303,33 @@ pub fn extract_delta(kind: StreamKind, payload: &str) -> Option<String> {
         StreamKind::Openai => openai::extract_delta(&v),
         StreamKind::Claude => claude::extract_delta(&v),
         StreamKind::Ollama => ollama::extract_delta(&v),
+        StreamKind::ClaudeCli => {
+            let event = v.pointer("/stream_event/event").unwrap_or(&v);
+            claude::extract_delta(event)
+        }
+        StreamKind::CodexCli => {
+            if v.get("type").and_then(|t| t.as_str()) != Some("item.completed") {
+                return None;
+            }
+            if v.pointer("/item/type").and_then(|t| t.as_str()) != Some("agent_message") {
+                return None;
+            }
+            v.pointer("/item/text")
+                .and_then(|t| t.as_str())
+                .map(String::from)
+        }
     }
 }
 
-pub fn build(args: &BuildArgs<'_>) -> PreparedRequest {
-    match args.provider {
-        Provider::Gemini => gemini::build(args),
-        Provider::Openai => openai::build(args),
-        Provider::Claude => claude::build(args),
-        Provider::Ollama => ollama::build(args),
+pub fn build(args: &BuildArgs<'_>) -> PreparedInvocation {
+    match (args.provider, args.backend) {
+        (Provider::Gemini, Backend::Api) => PreparedInvocation::Http(gemini::build(args)),
+        (Provider::Openai, Backend::Api) => PreparedInvocation::Http(openai::build(args)),
+        (Provider::Claude, Backend::Api) => PreparedInvocation::Http(claude::build(args)),
+        (Provider::Ollama, Backend::Api) => PreparedInvocation::Http(ollama::build(args)),
+        (Provider::Claude, Backend::Cli) => PreparedInvocation::Cli(claude::build_cli(args)),
+        (Provider::Openai, Backend::Cli) => PreparedInvocation::Cli(openai::build_cli(args)),
+        (_, Backend::Cli) => unreachable!("unsupported CLI backend passed validation"),
     }
 }
 
@@ -210,6 +350,128 @@ fn key_for(p: Provider, settings: &Settings) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::settings::ProviderSettings;
+
+    struct FakeProbe {
+        bins: &'static [&'static str],
+    }
+
+    impl BinaryProbe for FakeProbe {
+        fn has(&self, name: &str) -> bool {
+            self.bins.contains(&name)
+        }
+    }
+
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
+
+    fn settings_with_key(p: Provider) -> Settings {
+        let mut settings = Settings::default();
+        settings.providers.insert(
+            p.as_str().into(),
+            ProviderSettings {
+                api_key: Some("test-key".into()),
+                ..Default::default()
+            },
+        );
+        settings
+    }
+
+    #[test]
+    fn backend_config_parses() {
+        let src = r#"
+[providers.claude]
+backend = "cli"
+"#;
+        let settings: Settings = toml::from_str(src).unwrap();
+        assert_eq!(settings.backend(Provider::Claude), Some(Backend::Cli));
+    }
+
+    #[test]
+    fn backend_defaults_to_api() {
+        let settings = Settings::default();
+        assert_eq!(
+            resolve_backend(Provider::Claude, None, None, &settings, None, None),
+            Backend::Api
+        );
+    }
+
+    #[test]
+    fn auto_detect_prefers_api_over_cli() {
+        let settings = settings_with_key(Provider::Claude);
+        let probe = FakeProbe { bins: &["claude"] };
+        let mut model = None;
+        let resolved = resolve_provider_with_env(
+            None,
+            None,
+            None,
+            &mut model,
+            &settings,
+            &probe,
+            &no_env,
+            &|| None,
+        );
+        assert_eq!(resolved, Some((Provider::Claude, None)));
+        assert_eq!(
+            resolve_backend(
+                Provider::Claude,
+                None,
+                None,
+                &settings,
+                None,
+                resolved.and_then(|(_, b)| b),
+            ),
+            Backend::Api
+        );
+    }
+
+    #[test]
+    fn auto_detect_falls_back_to_claude_cli() {
+        let settings = Settings::default();
+        let probe = FakeProbe { bins: &["claude"] };
+        let mut model = None;
+        let resolved = resolve_provider_with_env(
+            None,
+            None,
+            None,
+            &mut model,
+            &settings,
+            &probe,
+            &no_env,
+            &|| None,
+        );
+        assert_eq!(resolved, Some((Provider::Claude, Some(Backend::Cli))));
+        assert_eq!(
+            resolve_backend(
+                Provider::Claude,
+                None,
+                None,
+                &settings,
+                None,
+                resolved.and_then(|(_, b)| b),
+            ),
+            Backend::Cli
+        );
+    }
+
+    #[test]
+    fn require_auth_cli_missing_binary() {
+        let settings = Settings::default();
+        let probe = FakeProbe { bins: &[] };
+        let err = require_auth_with_env(Provider::Claude, Backend::Cli, &settings, &probe, &no_env)
+            .unwrap_err();
+        assert!(err.contains("claude /login"));
+    }
+
+    #[test]
+    fn require_auth_api_no_key_errors() {
+        let settings = Settings::default();
+        let probe = FakeProbe { bins: &[] };
+        let err = require_auth_with_env(Provider::Claude, Backend::Api, &settings, &probe, &no_env)
+            .unwrap_err();
+        assert!(err.contains("no API key"));
+    }
 
     #[test]
     fn extract_gemini_delta() {
@@ -247,6 +509,31 @@ mod tests {
             extract_delta(StreamKind::Ollama, p).as_deref(),
             Some("find")
         );
+    }
+
+    #[test]
+    fn extract_claude_cli_delta() {
+        let p = r#"{"type":"stream_event","stream_event":{"event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"echo hi"}}}}"#;
+        assert_eq!(
+            extract_delta(StreamKind::ClaudeCli, p).as_deref(),
+            Some("echo hi")
+        );
+    }
+
+    #[test]
+    fn extract_codex_cli_delta() {
+        let p = r#"{"type":"item.completed","item":{"type":"agent_message","text":"git status"}}"#;
+        assert_eq!(
+            extract_delta(StreamKind::CodexCli, p).as_deref(),
+            Some("git status")
+        );
+        let other = r#"{"type":"item.completed","item":{"type":"tool_call","text":"nope"}}"#;
+        assert!(extract_delta(StreamKind::CodexCli, other).is_none());
+    }
+
+    #[test]
+    fn backend_unsupported_for_gemini() {
+        assert!(!Backend::supports(Provider::Gemini, Backend::Cli));
     }
 
     #[test]

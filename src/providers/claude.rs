@@ -1,4 +1,4 @@
-use super::{BuildArgs, PreparedRequest, json_headers, key_for};
+use super::{BuildArgs, PreparedCli, PreparedRequest, StreamKind, json_headers, key_for};
 use crate::config::{Mode, Provider};
 use serde_json::{Value, json};
 
@@ -34,6 +34,31 @@ pub(super) fn build(args: &BuildArgs<'_>) -> PreparedRequest {
         url: "https://api.anthropic.com/v1/messages".to_string(),
         headers,
         body,
+        provider: Provider::Claude,
+    }
+}
+
+pub(super) fn build_cli(args: &BuildArgs<'_>) -> PreparedCli {
+    PreparedCli {
+        program: "claude".to_string(),
+        args: vec![
+            "-p".into(),
+            "--model".into(),
+            args.model.into(),
+            "--output-format".into(),
+            "stream-json".into(),
+            "--include-partial-messages".into(),
+            "--verbose".into(),
+            "--no-session-persistence".into(),
+            "--permission-mode".into(),
+            "dontAsk".into(),
+            "--tools".into(),
+            "".into(),
+            "--append-system-prompt".into(),
+            args.system.into(),
+        ],
+        stdin: args.task.to_string(),
+        stream_kind: StreamKind::ClaudeCli,
         provider: Provider::Claude,
     }
 }

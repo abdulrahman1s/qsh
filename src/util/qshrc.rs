@@ -7,6 +7,7 @@ pub struct Askrc {
     #[allow(dead_code)]
     pub path: Option<PathBuf>,
     pub provider: Option<String>,
+    pub backend: Option<String>,
     pub mode: Option<String>,
     pub model: Option<String>,
     pub prompt: String,
@@ -60,6 +61,7 @@ pub fn load(path: &Path) -> Askrc {
         let val = line[eq + 1..].trim().to_string();
         match key.as_str() {
             "provider" if rc.provider.is_none() => rc.provider = Some(val),
+            "backend" if rc.backend.is_none() => rc.backend = Some(val),
             "mode" if rc.mode.is_none() => rc.mode = Some(val),
             "model" if rc.model.is_none() => rc.model = Some(val),
             _ => {}
@@ -84,12 +86,14 @@ mod tests {
         let mut f = NamedTempFile::new().unwrap();
         writeln!(f, "# comment").unwrap();
         writeln!(f, "provider=openai").unwrap();
+        writeln!(f, "backend = cli").unwrap();
         writeln!(f, "mode = smart").unwrap();
         writeln!(f, "---").unwrap();
         writeln!(f, "extra rules").unwrap();
         writeln!(f, "more rules").unwrap();
         let rc = load(f.path());
         assert_eq!(rc.provider.as_deref(), Some("openai"));
+        assert_eq!(rc.backend.as_deref(), Some("cli"));
         assert_eq!(rc.mode.as_deref(), Some("smart"));
         assert!(rc.model.is_none());
         assert_eq!(rc.prompt, "extra rules\nmore rules");
