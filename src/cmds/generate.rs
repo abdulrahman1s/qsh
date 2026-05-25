@@ -553,12 +553,17 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
 fn confirm(cmd: &mut String, state: &mut State, cache_dir: &Path, cache_file: &Path) -> NextAction {
     loop {
         ui::confirm_prompt();
-        let Some(line) = ui::read_tty_line() else {
+        let Some(key) = ui::read_tty_key() else {
+            eprintln!();
             return NextAction::Abort;
         };
-        let trimmed = line.trim();
-        let first = trimmed.chars().next().unwrap_or(' ');
-        match first {
+        // Raw mode disabled echo; mirror the keypress so the user sees what they pressed.
+        match key {
+            '\r' | '\n' => eprintln!(),
+            c if (c as u32) >= 0x20 && (c as u32) < 0x7f => eprintln!("{}", c),
+            _ => eprintln!(),
+        }
+        match key {
             'y' | 'Y' => return NextAction::None,
             'e' | 'E' => {
                 let stripped = clean::strip_why_comment(cmd);

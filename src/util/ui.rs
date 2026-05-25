@@ -226,6 +226,69 @@ pub fn read_tty_line() -> Option<String> {
     Some(line)
 }
 
+/// Read one keypress from the controlling TTY without requiring Enter.
+/// Uses `stty` to flip the terminal into non-canonical, no-echo mode for
+/// the duration of the read and restores prior settings on the way out.
+pub fn read_tty_key() -> Option<char> {
+    let saved = stty_get()?;
+    let _guard = TtyRestore { saved };
+    if !stty_set(&["-icanon", "-echo", "min", "1", "time", "0"]) {
+        return None;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .open(tty_path())
+        .ok()?;
+    let mut buf = [0u8; 1];
+    match f.read(&mut buf) {
+        Ok(1) => Some(buf[0] as char),
+        _ => None,
+    }
+}
+
+struct TtyRestore {
+    saved: String,
+}
+
+impl Drop for TtyRestore {
+    fn drop(&mut self) {
+        stty_set(&[self.saved.as_str()]);
+    }
+}
+
+fn stty_get() -> Option<String> {
+    use std::process::{Command, Stdio};
+    let tty = std::fs::OpenOptions::new()
+        .read(true)
+        .open(tty_path())
+        .ok()?;
+    let out = Command::new("stty")
+        .arg("-g")
+        .stdin(Stdio::from(tty))
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
+fn stty_set(args: &[&str]) -> bool {
+    use std::process::{Command, Stdio};
+    let Ok(tty) = std::fs::OpenOptions::new().read(true).open(tty_path()) else {
+        return false;
+    };
+    Command::new("stty")
+        .args(args)
+        .stdin(Stdio::from(tty))
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 fn tty_path() -> String {
     if let Ok(t) = std::env::var("TTY")
         && !t.is_empty()
