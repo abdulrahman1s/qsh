@@ -1,9 +1,10 @@
 use super::xml_escape;
 use crate::config::FILE_CAP;
 use std::collections::VecDeque;
+use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct FileBlock {
     pub xml: String,
@@ -38,13 +39,15 @@ pub struct FileRef {
 /// A plain path that exists wins over a slice interpretation, so `./weird:1`
 /// (a file literally named `weird:1`) reads the whole file.
 pub fn parse_path_arg(arg: &str) -> Option<FileRef> {
-    if !arg.starts_with("./") || arg.len() <= 2 {
+    if !is_dot_slash_arg(arg) {
         return None;
     }
     if Path::new(arg).is_file() {
+        let path = absolute_path(arg);
+        let path = path.to_string_lossy().into_owned();
         return Some(FileRef {
-            display: arg.to_string(),
-            path: arg.to_string(),
+            display: path.clone(),
+            path,
             slice: None,
         });
     }
@@ -53,10 +56,30 @@ pub fn parse_path_arg(arg: &str) -> Option<FileRef> {
     if !Path::new(path).is_file() {
         return None;
     }
+    let abs_path = absolute_path(path);
+    let abs_path = abs_path.to_string_lossy().into_owned();
+    let abs_display = format!("{}:{}", abs_path, suffix);
     Some(FileRef {
-        display: arg.to_string(),
-        path: path.to_string(),
+        display: abs_display,
+        path: abs_path,
         slice: Some(slice),
+    })
+}
+
+fn is_dot_slash_arg(arg: &str) -> bool {
+    arg.starts_with("./") && arg.len() > 2
+}
+
+fn absolute_path(path: &str) -> PathBuf {
+    let path = Path::new(path);
+    fs::canonicalize(path).unwrap_or_else(|_| {
+        if path.is_absolute() {
+            return path.to_path_buf();
+        }
+        let rel = path.strip_prefix(".").unwrap_or(path);
+        env::current_dir()
+            .map(|cwd| cwd.join(rel))
+            .unwrap_or_else(|_| path.to_path_buf())
     })
 }
 
@@ -242,6 +265,21 @@ mod tests {
         path.to_string_lossy().into_owned()
     }
 
+    fn rel_tmp_file(name: &str, body: &str) -> (String, String) {
+        let rel_dir = format!("target/qsh-files-test-{}", std::process::id());
+        let dir = Path::new(&rel_dir);
+        let _ = fs::create_dir_all(dir);
+        let rel = format!("{}/{}", rel_dir, name);
+        let mut f = fs::File::create(&rel).unwrap();
+        f.write_all(body.as_bytes()).unwrap();
+        let arg = format!("./{}", rel);
+        let abs = fs::canonicalize(&rel)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        (arg, abs)
+    }
+
     #[test]
     fn parse_slice_first() {
         assert_eq!(parse_slice_suffix("10"), Some(Slice::First(10)));
@@ -278,6 +316,24 @@ mod tests {
         assert!(parse_path_arg("foo.txt").is_none());
         assert!(parse_path_arg("/abs/path").is_none());
         assert!(parse_path_arg("./").is_none());
+    }
+
+    #[test]
+    fn parse_path_arg_uses_absolute_display_path() {
+        let (arg, abs) = rel_tmp_file("abs.txt", "hello\n");
+        let fr = parse_path_arg(&arg).unwrap();
+        assert_eq!(fr.display, abs);
+        assert_eq!(fr.path, abs);
+        assert_eq!(fr.slice, None);
+    }
+
+    #[test]
+    fn parse_path_arg_uses_absolute_display_path_for_slice() {
+        let (arg, abs) = rel_tmp_file("slice.txt", "a\nb\n");
+        let fr = parse_path_arg(&format!("{}:1", arg)).unwrap();
+        assert_eq!(fr.display, format!("{}:1", abs));
+        assert_eq!(fr.path, abs);
+        assert_eq!(fr.slice, Some(Slice::First(1)));
     }
 
     #[test]

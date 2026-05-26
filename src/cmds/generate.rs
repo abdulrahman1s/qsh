@@ -318,6 +318,23 @@ impl State {
     }
 }
 
+fn task_and_file_refs(args: &[String]) -> (String, Vec<files::FileRef>) {
+    let mut task_words = Vec::with_capacity(args.len());
+    let mut file_refs = Vec::new();
+
+    for arg in args {
+        if let Some(fr) = files::parse_path_arg(arg) {
+            task_words.push(fr.display.clone());
+            file_refs.push(fr);
+        } else {
+            task_words.push(arg.clone());
+        }
+    }
+
+    let user_task = task_words.join(" ").trim().to_string();
+    (user_task, file_refs)
+}
+
 fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
     if let Some(n) = args.alts
         && !(ALTS_MIN..=ALTS_MAX).contains(&n)
@@ -367,17 +384,9 @@ fn build_state(args: GenerateArgs, cache_dir: &Path) -> Result<State, i32> {
 
     let mut model: Option<String> = args.model.clone();
 
-    // Split task vs ./file refs.
-    let mut task_words: Vec<String> = Vec::new();
-    let mut file_refs: Vec<files::FileRef> = Vec::new();
-    for arg in args.task.iter() {
-        if let Some(fr) = files::parse_path_arg(arg) {
-            file_refs.push(fr);
-            continue;
-        }
-        task_words.push(arg.clone());
-    }
-    let user_task = task_words.join(" ").trim().to_string();
+    // Collect resolved ./file refs for context and expand only those refs in
+    // the user intent so commands can target them with absolute paths.
+    let (user_task, file_refs) = task_and_file_refs(&args.task);
 
     // Stdin (if piped).
     let mut stdin_data = String::new();
@@ -777,4 +786,55 @@ Other:
 Auto-detect order: gemini > claude > openai > ollama > claude CLI > codex CLI.
 "
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+    use std::path::Path;
+
+    fn rel_tmp_file(name: &str, body: &str) -> (String, String) {
+        let rel_dir = format!("target/qsh-generate-test-{}", std::process::id());
+        let dir = Path::new(&rel_dir);
+        let _ = fs::create_dir_all(dir);
+        let rel = format!("{}/{}", rel_dir, name);
+        let mut f = fs::File::create(&rel).unwrap();
+        f.write_all(body.as_bytes()).unwrap();
+        let arg = format!("./{}", rel);
+        let abs = fs::canonicalize(&rel)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        (arg, abs)
+    }
+
+    #[test]
+    fn task_keeps_file_refs_as_absolute_paths() {
+        let (arg, abs) = rel_tmp_file("intent.txt", "hello\n");
+        let args = vec!["summarize".to_string(), arg];
+
+        let (task, refs) = task_and_file_refs(&args);
+
+        assert_eq!(task, format!("summarize {}", abs));
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].display, abs);
+    }
+
+    #[test]
+    fn task_keeps_missing_dot_slash_refs_as_typed_without_file_context() {
+        let rel = format!(
+            "target/qsh-generate-test-{}/missing.txt",
+            std::process::id()
+        );
+        let _ = fs::remove_file(&rel);
+        let arg = format!("./{}", rel);
+        let args = vec!["touch".to_string(), arg.clone()];
+
+        let (task, refs) = task_and_file_refs(&args);
+
+        assert_eq!(task, format!("touch {}", arg));
+        assert!(refs.is_empty());
+    }
 }
