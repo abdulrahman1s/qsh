@@ -75,8 +75,9 @@ fn render_completion(shell: Shell) -> String {
 //   - `qsh` calls `qsh generate ...` and captures the accepted command
 //     from stdout. Everything else (status, streaming, errors) goes
 //     through stderr unchanged.
-//   - `print -s --` pushes the command into the user's shell history so
-//     up-arrow recall works naturally.
+//   - `print -rs --` pushes the command into the user's shell history so
+//     up-arrow recall works naturally. `-r` suppresses backslash processing
+//     so sequences like `\n` or `\/` are stored verbatim.
 //   - eval runs the command in the *current* zsh process. Stderr is teed
 //     into a tempfile so retry-state recording sees what failed.
 //   - On exit we call `qsh record` so the JSONL is updated.
@@ -112,7 +113,7 @@ qsh() {
 
   local hist_cmd="${cmd% [#]*}"
   hist_cmd="${hist_cmd%"${hist_cmd##*[![:space:]]}"}"
-  [[ -n "$hist_cmd" ]] && print -s -- "$hist_cmd"
+  [[ -n "$hist_cmd" ]] && print -rs -- "$hist_cmd"
 
   { eval "$cmd" 3>&1 1>&4 2>&3 | tee -- "$err_file" >&2
     rc=${pipestatus[1]}
