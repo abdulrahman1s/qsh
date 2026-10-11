@@ -30,6 +30,10 @@ const TEMPLATE: &str = r#"# qsh config
 # Use `[providers.<p>.models]` to pick a different model per mode. When set,
 # `models.fast` / `models.smart` override the bare `model` field; the bare
 # `model` is then just the fallback if either per-mode value is missing.
+# `[providers.<p>.effort]` maps exact model names to effort levels. This
+# follows the resolved model, including `-m`, in both modes. Supported for
+# Gemini (minimal|low|medium|high), OpenAI (none|minimal|low|medium|high|xhigh),
+# and Claude (low|medium|high|xhigh|max). Model support varies.
 
 # [providers.gemini]
 # api_key = "..."
@@ -37,6 +41,8 @@ const TEMPLATE: &str = r#"# qsh config
 # [providers.gemini.models]
 # fast  = "gemini-3.5-flash"
 # smart = "gemini-3.5-pro"
+# [providers.gemini.effort]
+# "gemini-3.5-flash" = "medium"
 # [providers.gemini.tokens]
 # fast  = 1000                 # max output tokens in fast mode
 # smart = 16000                # max output tokens in smart mode
@@ -48,6 +54,8 @@ const TEMPLATE: &str = r#"# qsh config
 # [providers.openai.models]
 # fast  = "gpt-5.4-mini"
 # smart = "gpt-5.4"
+# [providers.openai.effort]
+# "gpt-5.4" = "xhigh"
 # [providers.openai.tokens]
 # fast  = 1000
 # smart = 16000
@@ -59,6 +67,8 @@ const TEMPLATE: &str = r#"# qsh config
 # [providers.claude.models]
 # fast  = "claude-haiku-4-5"
 # smart = "claude-opus-4-7"
+# [providers.claude.effort]
+# "claude-opus-4-7" = "high"
 # [providers.claude.tokens]
 # fast            = 1000
 # smart           = 10000      # Claude's smart-mode max_tokens
@@ -134,6 +144,14 @@ pub fn show(settings: &Settings) -> i32 {
 
         let (ms_val, ms_src) = model_mode_source(settings, p, Mode::Smart);
         println!("      models.smart:    {:<24} [{}]", ms_val, ms_src);
+
+        if let Some(ps) = settings.providers.get(p.as_str()) {
+            let mut efforts: Vec<_> = ps.effort.iter().collect();
+            efforts.sort_by_key(|(model, _)| *model);
+            for (model, effort) in efforts {
+                println!("      effort.{}: {} [config.toml]", model, effort);
+            }
+        }
 
         let (b_val, b_src) = backend_source(settings, p);
         println!("      backend:         {:<24} [{}]", b_val, b_src);
@@ -479,6 +497,7 @@ enum Key {
     Model(Provider),
     ModelFast(Provider),
     ModelSmart(Provider),
+    Effort(Provider, String),
     OllamaBaseUrl,
     TokensFast(Provider),
     TokensSmart(Provider),
@@ -492,6 +511,19 @@ enum Key {
 }
 
 fn parse_key(s: &str) -> Result<Key, String> {
+    if let Some(rest) = s.strip_prefix("providers.")
+        && let Some((provider, model)) = rest.split_once(".effort.")
+    {
+        let p =
+            Provider::parse(provider).ok_or_else(|| format!("unknown provider: {}", provider))?;
+        if p == Provider::Ollama {
+            return Err("effort is not supported for ollama".into());
+        }
+        if model.is_empty() {
+            return Err("effort model name cannot be empty".into());
+        }
+        return Ok(Key::Effort(p, model.into()));
+    }
     match s {
         "provider" => return Ok(Key::Provider),
         "mode" => return Ok(Key::Mode),
@@ -572,6 +604,7 @@ fn print_allowed_keys() {
             p.as_str()
         );
     }
+    eprintln!("  providers.<gemini|openai|claude>.effort.<model> (model effort)");
     eprintln!("  providers.claude.backend             (api|cli)");
     eprintln!("  providers.openai.backend             (api|cli)");
     eprintln!("  providers.ollama.base_url");
@@ -625,6 +658,22 @@ fn validate_value(key: &Key, value: &str) -> Result<(), String> {
         | Key::OllamaBaseUrl => {
             if value.is_empty() {
                 return Err("value cannot be empty".into());
+            }
+        }
+        Key::Effort(p, _) => {
+            let allowed = match p {
+                Provider::Gemini => &["minimal", "low", "medium", "high"][..],
+                Provider::Openai => &["none", "minimal", "low", "medium", "high", "xhigh"],
+                Provider::Claude => &["low", "medium", "high", "xhigh", "max"],
+                Provider::Ollama => return Err("effort is not supported for ollama".into()),
+            };
+            if !allowed.contains(&value) {
+                return Err(format!(
+                    "invalid effort for {}: {} (expected {})",
+                    p.as_str(),
+                    value,
+                    allowed.join("|")
+                ));
             }
         }
         Key::Backend(p) => {
@@ -732,6 +781,7 @@ fn apply(doc: &mut toml_edit::DocumentMut, key: &Key, value: &str) {
         ),
         Key::ModelFast(p) => provider_sub_leaf(doc, *p, "models", "fast", tv(value)),
         Key::ModelSmart(p) => provider_sub_leaf(doc, *p, "models", "smart", tv(value)),
+        Key::Effort(p, model) => provider_sub_leaf(doc, *p, "effort", model, tv(value)),
         Key::RetryKeep => section_leaf(doc, "retry", "keep", tv(int(value))),
         Key::RetryWindowMinutes => section_leaf(doc, "retry", "window_minutes", tv(int(value))),
         Key::CaptureStderrBytes => section_leaf(doc, "capture", "stderr_bytes", tv(int(value))),
@@ -778,6 +828,22 @@ mod tests {
         assert_eq!(
             parse_key("providers.ollama.base_url").unwrap(),
             Key::OllamaBaseUrl
+        );
+    }
+
+    #[test]
+    fn parse_and_apply_model_effort() {
+        let key = parse_key("providers.openai.effort.gpt-5.4").unwrap();
+        assert_eq!(key, Key::Effort(Provider::Openai, "gpt-5.4".into()));
+        assert!(validate_value(&key, "xhigh").is_ok());
+        assert!(validate_value(&key, "max").is_err());
+        assert!(parse_key("providers.ollama.effort.llama3").is_err());
+        let mut doc: toml_edit::DocumentMut = "".parse().unwrap();
+        apply(&mut doc, &key, "xhigh");
+        let settings: Settings = toml::from_str(&doc.to_string()).unwrap();
+        assert_eq!(
+            settings.effort_override(Provider::Openai, "gpt-5.4"),
+            Some("xhigh")
         );
     }
 

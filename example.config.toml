@@ -27,6 +27,10 @@ model = "gemini-3.5-flash"
 [providers.gemini.models]
 fast  = "gemini-3.5-flash"
 smart = "gemini-3.5-pro"
+# Exact model names can override the default effort (low in fast mode,
+# high in smart mode). The override follows the model selected with -m too.
+[providers.gemini.effort]
+"gemini-3.5-flash" = "medium"  # minimal | low | medium | high
 [providers.gemini.tokens]
 fast  = 1000                   # max output tokens in fast mode
 smart = 16000                  # max output tokens in smart mode
@@ -38,6 +42,8 @@ model = "gpt-5.4-mini"
 [providers.openai.models]
 fast  = "gpt-5.4-mini"
 smart = "gpt-5.4"
+[providers.openai.effort]
+"gpt-5.4" = "xhigh"            # none | minimal | low | medium | high | xhigh
 [providers.openai.tokens]
 fast  = 1000
 smart = 16000
@@ -49,6 +55,8 @@ model = "claude-sonnet-4-6"
 [providers.claude.models]
 fast  = "claude-haiku-4-5"
 smart = "claude-opus-4-7"
+[providers.claude.effort]
+"claude-opus-4-7" = "high"     # low | medium | high | xhigh | max
 [providers.claude.tokens]
 fast            = 1000
 smart           = 10000        # Claude's smart-mode max_tokens cap

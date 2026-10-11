@@ -26,6 +26,8 @@ pub struct ProviderSettings {
     pub base_url: Option<String>,
     pub tokens: Option<TokenSettings>,
     pub models: Option<ModelSettings>,
+    #[serde(default)]
+    pub effort: HashMap<String, String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -89,6 +91,21 @@ pub fn load() -> Settings {
 }
 
 impl Settings {
+    pub fn effort<'a>(&'a self, p: Provider, model: &str, mode: Mode) -> &'a str {
+        self.effort_override(p, model).unwrap_or(match mode {
+            Mode::Fast => "low",
+            Mode::Smart => "high",
+        })
+    }
+
+    pub fn effort_override(&self, p: Provider, model: &str) -> Option<&str> {
+        self.providers
+            .get(p.as_str())
+            .and_then(|s| s.effort.get(model))
+            .map(String::as_str)
+            .filter(|s| !s.is_empty())
+    }
+
     pub fn api_key(&self, p: Provider) -> Option<&str> {
         self.providers
             .get(p.as_str())
@@ -378,5 +395,24 @@ fast = "llama3"
         let s: Settings = toml::from_str(src).unwrap();
         assert!(s.any_model_set(Provider::Ollama));
         assert!(!s.any_model_set(Provider::Claude));
+    }
+
+    #[test]
+    fn effort_follows_exact_model_and_falls_back_to_mode() {
+        let s: Settings = toml::from_str(
+            r#"
+[providers.openai.effort]
+"gpt-5.4" = "xhigh"
+"gpt-5.4-mini" = "medium"
+"#,
+        )
+        .unwrap();
+        assert_eq!(s.effort(Provider::Openai, "gpt-5.4", Mode::Fast), "xhigh");
+        assert_eq!(
+            s.effort(Provider::Openai, "gpt-5.4-mini", Mode::Smart),
+            "medium"
+        );
+        assert_eq!(s.effort(Provider::Openai, "other", Mode::Fast), "low");
+        assert_eq!(s.effort(Provider::Openai, "other", Mode::Smart), "high");
     }
 }

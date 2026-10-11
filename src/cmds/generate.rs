@@ -102,6 +102,9 @@ pub async fn run(args: GenerateArgs) -> i32 {
             state.backend.as_str(),
             &state.model,
             state.mode.as_str(),
+            state
+                .settings
+                .effort(state.provider, &state.model, state.mode),
             &sys,
             &task_full,
         );

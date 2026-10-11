@@ -383,6 +383,9 @@ qsh config set providers.claude.backend cli
 qsh config set providers.claude.models.fast  claude-haiku-4-5
 qsh config set providers.claude.models.smart claude-opus-4-7
 
+# Set effort for a specific resolved model, including a model passed with -m.
+qsh config set providers.openai.effort.gpt-5.4 xhigh
+
 # Tune behavior.
 qsh config set providers.openai.tokens.smart 32000
 qsh config set providers.claude.tokens.thinking_budget 8000
@@ -409,6 +412,7 @@ Settable keys:
 | `providers.<p>.model` | string, falls back to `<P>_MODEL` env and then built-in default | unset |
 | `providers.<p>.models.fast` | string, per-mode model override for `fast` (wins over `model`) | unset |
 | `providers.<p>.models.smart` | string, per-mode model override for `smart` (wins over `model`) | unset |
+| `providers.<gemini|openai|claude>.effort.<model>` | effort for an exact model name; also available in `[providers.<p>.effort]` with quoted model keys | low in fast mode, high in smart mode (Claude API keeps its own default until overridden) |
 | `providers.<p>.tokens.fast` | u32 max output tokens | 1000 |
 | `providers.<p>.tokens.smart` | u32 max output tokens | 16000, except Claude 10000 |
 | `providers.claude.tokens.thinking_budget` | u32 Claude extended-thinking budget | 5000 |
@@ -421,6 +425,8 @@ Settable keys:
 | `timeouts.smart_secs` | total request timeout in smart mode | 180 |
 
 For API-key values, pipe the value via stdin. For non-secret keys, passing the value as the third argument is fine.
+
+Effort values: Gemini accepts `minimal`, `low`, `medium`, `high`; OpenAI accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`; Claude accepts `low`, `medium`, `high`, `xhigh`, `max`. Individual models may support fewer levels. Claude API sends `output_config.effort` only when a model override is set; its smart mode also retains the configured extended-thinking budget.
 
 ## Advanced Workflows
 

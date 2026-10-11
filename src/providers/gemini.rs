@@ -1,5 +1,5 @@
 use super::{BuildArgs, PreparedRequest, json_headers, key_for};
-use crate::config::{Mode, Provider};
+use crate::config::Provider;
 use serde_json::{Value, json};
 
 pub(super) const API_KEY_ENV: &str = "GEMINI_API_KEY";
@@ -12,11 +12,9 @@ pub(super) fn build(args: &BuildArgs<'_>) -> PreparedRequest {
         "x-goog-api-key".into(),
         key_for(Provider::Gemini, args.settings),
     ));
-    let thinking_level = if args.mode == Mode::Smart {
-        "high"
-    } else {
-        "low"
-    };
+    let thinking_level = args
+        .settings
+        .effort(Provider::Gemini, args.model, args.mode);
     let body = json!({
         "system_instruction": {"parts": [{"text": args.system}]},
         "contents": [{"parts": [{"text": args.task}]}],
@@ -47,4 +45,37 @@ pub(super) fn extract_delta(v: &Value) -> Option<String> {
         }
     }
     (!out.is_empty()).then_some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Backend, Mode};
+    use crate::util::settings::Settings;
+
+    #[test]
+    fn configured_effort_sets_thinking_level() {
+        let mut settings = Settings::default();
+        settings
+            .providers
+            .entry("gemini".into())
+            .or_default()
+            .effort
+            .insert("gemini-3.5-flash".into(), "medium".into());
+        let args = BuildArgs {
+            provider: Provider::Gemini,
+            backend: Backend::Api,
+            system: "sys",
+            task: "task",
+            model: "gemini-3.5-flash",
+            mode: Mode::Fast,
+            max_tok: 1000,
+            stop: Vec::new(),
+            settings: &settings,
+        };
+        assert_eq!(
+            build(&args).body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "medium"
+        );
+    }
 }

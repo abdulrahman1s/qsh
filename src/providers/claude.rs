@@ -10,7 +10,7 @@ pub(super) fn build(args: &BuildArgs<'_>) -> PreparedRequest {
     let mut headers = json_headers();
     headers.push(("x-api-key".into(), key_for(Provider::Claude, args.settings)));
     headers.push(("anthropic-version".into(), "2023-06-01".into()));
-    let body = if args.mode == Mode::Smart {
+    let mut body = if args.mode == Mode::Smart {
         json!({
             "model": args.model,
             "max_tokens": args.settings.claude_smart_max(),
@@ -30,6 +30,9 @@ pub(super) fn build(args: &BuildArgs<'_>) -> PreparedRequest {
             "stream": true,
         })
     };
+    if let Some(effort) = args.settings.effort_override(Provider::Claude, args.model) {
+        body["output_config"] = json!({"effort": effort});
+    }
     PreparedRequest {
         url: "https://api.anthropic.com/v1/messages".to_string(),
         headers,
@@ -39,11 +42,9 @@ pub(super) fn build(args: &BuildArgs<'_>) -> PreparedRequest {
 }
 
 pub(super) fn build_cli(args: &BuildArgs<'_>) -> PreparedCli {
-    let effort = if args.mode == Mode::Smart {
-        "high"
-    } else {
-        "low"
-    };
+    let effort = args
+        .settings
+        .effort(Provider::Claude, args.model, args.mode);
     PreparedCli {
         program: "claude".to_string(),
         args: vec![
@@ -124,5 +125,20 @@ mod tests {
             .position(|a| a == "--effort")
             .expect("--effort arg");
         assert_eq!(cli.args[i + 1], "high");
+    }
+
+    #[test]
+    fn configured_effort_reaches_api_and_cli() {
+        let mut args = args_for(Mode::Fast);
+        let mut settings = Settings::default();
+        settings
+            .providers
+            .entry("claude".into())
+            .or_default()
+            .effort
+            .insert("claude-sonnet-4-6".into(), "medium".into());
+        args.settings = Box::leak(Box::new(settings));
+        assert_eq!(build(&args).body["output_config"]["effort"], "medium");
+        assert!(build_cli(&args).args.contains(&"medium".into()));
     }
 }
